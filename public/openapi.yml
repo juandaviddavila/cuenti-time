@@ -1,0 +1,238 @@
+openapi: 3.0.0
+info:
+  title: cuenti time API
+  description: |
+    API pública multi-tenant. Cada Bearer token pertenece a **una sola empresa**.
+    Todas las consultas se filtran automáticamente por esa empresa; no es posible
+    leer ni escribir datos de otra compañía.
+  version: 1.1.0
+servers:
+  - url: http://192.168.1.230:7578/api/v1
+    description: API v1 (cuenti time)
+  - url: /api/v1
+    description: Relativo al host actual
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Token `cuenti_…` emitido en Integraciones. Scopes `read` o `read,write`.
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+security:
+  - bearerAuth: []
+paths:
+  /companies/me:
+    get:
+      summary: Empresa del token
+      tags: [Empresa]
+      responses:
+        "200": { description: Datos de la empresa dueña del token }
+        "401": { description: Unauthorized }
+  /employees:
+    get:
+      summary: Listar empleados
+      tags: [Empleados]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, INACTIVE], default: ACTIVE }
+        - name: branchId
+          in: query
+          schema: { type: string }
+          description: Debe pertenecer a la misma empresa del token
+      responses:
+        "200": { description: Lista de empleados de la empresa del token }
+  /employees/{id}:
+    get:
+      summary: Detalle de empleado
+      tags: [Empleados]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Empleado encontrado }
+        "404": { description: No encontrado en esta empresa }
+  /positions:
+    get:
+      summary: Listar cargos
+      tags: [Catálogos]
+      parameters:
+        - name: active
+          in: query
+          schema:
+            type: string
+            enum: ["true", "false", "all"]
+            default: "true"
+      responses:
+        "200": { description: Cargos de la empresa }
+  /shifts:
+    get:
+      summary: Listar turnos
+      tags: [Catálogos]
+      parameters:
+        - name: active
+          in: query
+          schema:
+            type: string
+            enum: ["true", "false", "all"]
+            default: "true"
+      responses:
+        "200": { description: Turnos de la empresa }
+  /employee-shifts:
+    get:
+      summary: Asignaciones empleado–turno
+      tags: [Catálogos]
+      parameters:
+        - name: employeeId
+          in: query
+          schema: { type: string }
+        - name: shiftId
+          in: query
+          schema: { type: string }
+        - name: date
+          in: query
+          schema: { type: string, format: date }
+          description: Solo asignaciones vigentes en esa fecha
+      responses:
+        "200": { description: Asignaciones }
+  /incident-types:
+    get:
+      summary: Tipos de novedad
+      tags: [Novedades]
+      parameters:
+        - name: active
+          in: query
+          schema:
+            type: string
+            enum: ["true", "false", "all"]
+            default: "true"
+      responses:
+        "200": { description: Tipos de novedad }
+  /incidents:
+    get:
+      summary: Listar novedades
+      tags: [Novedades]
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: date
+          in: query
+          schema: { type: string, format: date }
+        - name: employeeId
+          in: query
+          schema: { type: string }
+        - name: branchId
+          in: query
+          schema: { type: string }
+        - name: incidentTypeId
+          in: query
+          schema: { type: string }
+      responses:
+        "200": { description: Novedades de la empresa }
+  /attendance:
+    get:
+      summary: Historial de asistencia
+      tags: [Asistencia]
+      parameters:
+        - name: date
+          in: query
+          schema: { type: string, format: date }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: employeeId
+          in: query
+          schema: { type: string }
+        - name: branchId
+          in: query
+          schema: { type: string }
+      responses:
+        "200": { description: Registros de asistencia }
+    post:
+      summary: Registrar entrada o salida
+      description: Requiere scope `write`. Valida anti-doble marcación y que empleado/sucursal sean de la empresa del token.
+      tags: [Asistencia]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                employeeId: { type: string }
+                branchId: { type: string }
+                type: { type: string, enum: [CHECK_IN, CHECK_OUT] }
+                recordedAt: { type: string, format: date-time }
+              required: [employeeId, branchId, type]
+      responses:
+        "201": { description: Registro creado }
+        "403": { description: Falta scope write }
+        "404": { description: Empleado o sucursal de otra empresa / inexistente }
+        "422": { description: Regla de negocio (doble marcación, inactivo, etc.) }
+  /branches:
+    get:
+      summary: Listar sucursales
+      tags: [Sucursales]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, INACTIVE], default: ACTIVE }
+      responses:
+        "200": { description: Lista de sucursales }
+  /reports/daily:
+    get:
+      summary: Reporte diario simple
+      tags: [Reportes]
+      parameters:
+        - name: date
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200": { description: Resumen del día }
+  /reports/hr:
+    get:
+      summary: Informes RR.HH. (motor completo)
+      tags: [Reportes]
+      parameters:
+        - name: report
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [absences, lates, early_leaves, open_days, employee_summary, branch_summary, daily]
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: branchId
+          in: query
+          schema: { type: string }
+        - name: employeeId
+          in: query
+          schema: { type: string }
+        - name: shiftId
+          in: query
+          schema: { type: string }
+        - name: onlyUnjustified
+          in: query
+          schema: { type: boolean }
+        - name: includeJustified
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200": { description: Resultado del informe (solo datos de la empresa del token) }

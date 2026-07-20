@@ -1,0 +1,20 @@
+{
+  "name": "cuenti time",
+  "description": "cuenti time - Control de ingreso y salida de empleados mediante reconocimiento facial",
+  "icons": [
+    { "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon-512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ],
+  "theme_color": "#111111",
+  "background_color": "#111111",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "es",
+  "short_name": "cuenti time",
+  "categories": ["business", "productivity"],
+  "screenshots": []
+}

@@ -1,0 +1,484 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id                      String              @id @default(cuid())
+  name                    String
+  legalName               String
+  taxId                   String              @unique
+  email                   String
+  phone                   String?
+  address                 String?
+  city                    String?
+  country                 String              @default("Colombia")
+  logo                    String?
+  status                  Status              @default(ACTIVE)
+  
+  // Suscripción y límites
+  subscriptionExpiresAt   DateTime?
+  maxEmployees            Int                 @default(10)
+  
+  // Tolerancias de asistencia
+  lateToleranceMinutes           Int                 @default(10)
+  earlyLeaveToleranceMinutes     Int                 @default(10)
+  lateReportRecipients           String?             // JSON array de emails
+  lateReportTime                 String              @default("23:00")
+
+  /// Distancia euclidiana máxima para match facial (face-api / pgvector). Menor = más estricto. Default 0.6.
+  faceMatchThreshold             Float               @default(0.6)
+  
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+  attendances             AttendanceRecord[]
+  auditLogs               AuditLog[]
+  branches                Branch[]
+  employees               Employee[]
+  faceValidations         FaceValidationLog[]
+  users                   User[]
+  positions               Position[]
+  shifts                  Shift[]
+  incidentTypes           IncidentType[]
+  incidents               Incident[]
+  apiTokens               ApiToken[]
+  webhookSubscriptions    WebhookSubscription[]
+  webhookDeliveries       WebhookDelivery[]
+  payments                Payment[]
+  lateReportLogs          LateReportLog[]
+
+  @@index([taxId])
+  @@index([status])
+}
+
+model Branch {
+  id                     String              @id @default(cuid())
+  companyId              String
+  name                   String
+  code                   String
+  address                String?
+  city                   String?
+  phone                  String?
+  managerName            String?
+  status                 Status              @default(ACTIVE)
+  duplicateWindowMinutes Float               @default(10)
+  
+  // Geolocalización
+  latitude               Float?
+  longitude              Float?
+  googlePlaceId          String?
+  radiusMeters           Int                 @default(500)
+  
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+  attendances            AttendanceRecord[]
+  company                Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employees              Employee[]
+  faceValidations        FaceValidationLog[]
+  incidents              Incident[]
+  lateReportLogs         LateReportLog[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@index([status])
+}
+
+model Position {
+  id        String     @id @default(cuid())
+  companyId String
+  name      String
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employees Employee[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model Shift {
+  id            String          @id @default(cuid())
+  companyId     String
+  name          String
+  mondayStart   String?
+  mondayEnd     String?
+  tuesdayStart  String?
+  tuesdayEnd    String?
+  wednesdayStart String?
+  wednesdayEnd  String?
+  thursdayStart String?
+  thursdayEnd   String?
+  fridayStart   String?
+  fridayEnd     String?
+  saturdayStart String?
+  saturdayEnd   String?
+  sundayStart   String?
+  sundayEnd     String?
+  active        Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  company       Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  assignments   EmployeeShift[]
+  incidents     Incident[]      // Novedades colectivas
+
+  @@index([companyId])
+}
+
+model EmployeeShift {
+  id        String    @id @default(cuid())
+  employeeId String
+  shiftId   String
+  startDate DateTime
+  endDate   DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  shift     Shift     @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([shiftId])
+  @@index([startDate])
+  @@index([endDate])
+}
+
+model IncidentType {
+  id                 String     @id @default(cuid())
+  companyId          String
+  name               String
+  active             Boolean    @default(true)
+  /// Justifica no marcar (vacaciones, incapacidad, permiso, día compensatorio)
+  countsAsAbsence    Boolean    @default(false)
+  /// No cuenta como tardanza
+  excusesLate        Boolean    @default(false)
+  /// No cuenta como salida anticipada
+  excusesEarlyLeave  Boolean    @default(false)
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  company            Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  incidents          Incident[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model Incident {
+  id             String       @id @default(cuid())
+  companyId      String
+  employeeId     String?
+  branchId       String?
+  shiftId        String?      // Para novedades colectivas por turno
+  incidentTypeId String
+  date           DateTime
+  overrideStart  String?
+  overrideEnd    String?
+  reason         String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  company        Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee       Employee?    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  branch         Branch?      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  shift          Shift?       @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  incidentType   IncidentType @relation(fields: [incidentTypeId], references: [id])
+
+  @@index([companyId])
+  @@index([employeeId])
+  @@index([branchId])
+  @@index([shiftId])
+  @@index([incidentTypeId])
+  @@index([date])
+}
+
+model ApiToken {
+  id          String    @id @default(cuid())
+  companyId   String
+  name        String
+  token       String    @unique
+  /// Prefijo del token en claro (ej. "cuenti_a1b2c3d4") para lookup O(1) sin escanear todo el SaaS.
+  tokenPrefix String?
+  /// Copia cifrada AES-GCM del secreto para poder recuperarlo en Integraciones.
+  tokenCipher String?   @db.Text
+  scopes      String    @default("read")
+  active      Boolean   @default(true)
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([active])
+  @@index([tokenPrefix])
+}
+
+model Employee {
+  id                 String              @id @default(cuid())
+  companyId          String
+  branchId           String
+  fullName           String
+  documentType       DocumentType        @default(CC)
+  documentNumber     String
+  positionId         String?
+  email              String?
+  phone              String?
+  photo              String?             @db.Text
+  status             Status              @default(ACTIVE)
+  workScheduleId     String?
+  faceRegistered     Boolean             @default(false)
+  faceEmbeddingId    String?
+  faceRegisteredAt   DateTime?
+  biometricConsentAt DateTime?
+  hireDate           DateTime?
+  internalCode       String?
+  notes              String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  faceEmbedding      Unsupported("vector(128)")?
+  attendances        AttendanceRecord[]
+  branch             Branch              @relation(fields: [branchId], references: [id])
+  company            Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  faceValidations    FaceValidationLog[]
+  position           Position?           @relation(fields: [positionId], references: [id])
+  shifts             EmployeeShift[]
+  incidents          Incident[]
+
+  @@unique([companyId, documentNumber])
+  @@index([companyId])
+  @@index([branchId])
+  @@index([status])
+  @@index([faceRegistered])
+  @@index([positionId])
+}
+
+model AttendanceRecord {
+  id               String           @id @default(cuid())
+  companyId        String
+  branchId         String
+  employeeId       String
+  type             AttendanceType
+  recordedAt       DateTime         @default(now())
+  validationStatus ValidationResult @default(SUCCESS)
+  confidenceScore  Float?
+  livenessScore    Float?
+  deviceInfo       String?
+  ipAddress        String?
+  latitude         Float?
+  longitude        Float?
+  distanceFromBranch Int?           // Distancia en metros desde la sucursal
+  evidenceUrl      String?
+  notes            String?
+  isManual         Boolean          @default(false)
+  manualBy         String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  branch           Branch           @relation(fields: [branchId], references: [id])
+  company          Company          @relation(fields: [companyId], references: [id])
+  employee         Employee         @relation(fields: [employeeId], references: [id])
+
+  @@index([companyId])
+  @@index([branchId])
+  @@index([employeeId])
+  @@index([recordedAt])
+  @@index([type])
+}
+
+model FaceValidationLog {
+  id              String           @id @default(cuid())
+  companyId       String
+  branchId        String?
+  employeeId      String?
+  result          ValidationResult
+  reason          String?
+  confidenceScore Float?
+  livenessScore   Float?
+  attemptImageUrl String?
+  deviceInfo      String?
+  ipAddress       String?
+  createdAt       DateTime @default(now())
+  branch          Branch?          @relation(fields: [branchId], references: [id])
+  company         Company          @relation(fields: [companyId], references: [id])
+  employee        Employee?        @relation(fields: [employeeId], references: [id])
+
+  @@index([companyId])
+  @@index([employeeId])
+  @@index([result])
+  @@index([createdAt])
+  @@index([branchId])
+}
+
+model User {
+  id                     String     @id @default(cuid())
+  companyId              String?
+  name                   String
+  email                  String     @unique
+  password               String
+  role                   UserRole   @default(REPORT_VIEWER)
+  status                 Status     @default(ACTIVE)
+  avatar                 String?
+  branchId               String?
+  lastLoginAt            DateTime?
+
+  // Permisos granulares (además del rol)
+  bypassGeofence         Boolean    @default(false)
+  canManageIntegrations  Boolean    @default(false)
+  
+  // Verificación de email (registro)
+  emailVerifiedAt        DateTime?
+  emailVerificationToken String?
+  emailVerificationExpiresAt DateTime?
+
+  // Código de acceso al iniciar sesión
+  loginOtpHash           String?
+  loginOtpExpiresAt      DateTime?
+  
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+  auditLogs              AuditLog[]
+  company                Company?   @relation(fields: [companyId], references: [id])
+
+  @@index([email])
+  @@index([companyId])
+  @@index([role])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  companyId String?
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  oldValues Json?
+  newValues Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  company   Company? @relation(fields: [companyId], references: [id])
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([companyId])
+  @@index([userId])
+  @@index([entity])
+  @@index([createdAt])
+}
+
+enum UserRole {
+  SAAS_SUPER_ADMIN
+  COMPANY_ADMIN
+  BRANCH_SUPERVISOR
+  FACE_REGISTRAR
+  REPORT_VIEWER
+  DEVELOPER
+}
+
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+
+enum DocumentType {
+  CC
+  CE
+  PASSPORT
+  NIT
+  OTHER
+}
+
+enum AttendanceType {
+  CHECK_IN
+  CHECK_OUT
+}
+
+enum ValidationResult {
+  SUCCESS
+  FAILED
+  LOW_CONFIDENCE
+  LIVENESS_FAILED
+  SPOOFING_DETECTED
+  FACE_NOT_FOUND
+  MULTIPLE_FACES
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NUEVOS MODELOS - Plan de 13 fases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model WebhookSubscription {
+  id          String    @id @default(cuid())
+  companyId   String
+  url         String
+  events      String    // JSON array: ["employee.created", "attendance.checked_in", ...]
+  secret      String    // HMAC-SHA256 para firmar payloads
+  active      Boolean   @default(true)
+  timeoutMs   Int       @default(2000)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  deliveries  WebhookDelivery[]
+
+  @@index([companyId])
+  @@index([active])
+}
+
+model WebhookDelivery {
+  id             String   @id @default(cuid())
+  subscriptionId String
+  event          String
+  payload        Json
+  attempt        Int      @default(1)
+  status         String   @default("PENDING") // PENDING, SUCCESS, FAILED
+  responseStatus Int?
+  responseBody   String?  @db.Text
+  errorMessage   String?  @db.Text
+  scheduledAt    DateTime @default(now())
+  deliveredAt    DateTime?
+  nextRetryAt    DateTime?
+  subscription   WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId      String
+
+  @@index([subscriptionId])
+  @@index([status])
+  @@index([nextRetryAt])
+  @@index([companyId])
+}
+
+model Payment {
+  id                 String    @id @default(cuid())
+  companyId          String
+  wompiReference     String    @unique
+  amount             Int       // En centavos
+  billingCycle       String    // "monthly" | "yearly"
+  additionalEmployees Int      @default(0)
+  status             String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  wompiSignature     String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  company            Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([wompiReference])
+  @@index([status])
+}
+
+model LateReportLog {
+  id             String    @id @default(cuid())
+  branchId       String
+  date           DateTime
+  recipientCount Int
+  lateCount      Int
+  absentCount    Int
+  sentAt         DateTime  @default(now())
+  success        Boolean
+  errorMessage   String?   @db.Text
+  branch         Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  company        Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId      String
+
+  @@index([branchId])
+  @@index([date])
+  @@index([companyId])
+}
