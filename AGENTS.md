@@ -339,12 +339,20 @@ src/app/api/
 - En desktop, aunque la sucursal tenga geofence, no se bloquea por falta de GPS.
 
 ## Suscripción y límites
-- Empresas nuevas reciben `subscriptionExpiresAt = now + 7 días` y `maxEmployees = 10`.
-- `src/lib/subscription.ts` centraliza validación de suscripción vencida y límite facial.
+- Empresas nuevas inician en **plan gratis**: `plan = "free"`, `subscriptionStatus = "none"`, `subscriptionExpiresAt = null` y `maxEmployees = BillingConfig.freeEmployeeLimit` (default 3). Sin trial de 7 días.
+- `src/lib/subscription.ts` centraliza validación de suscripción, cupo de empleados y límite facial; `requirePaidActivePlan` restringe API/MCP a planes pagos activos.
 - `src/app/(dashboard)/layout.tsx` redirige empresas vencidas a `/subscription-expired`; `SAAS_SUPER_ADMIN` no se bloquea.
 - `/pricing` existe como página pública básica; `/plans` redirige a `/pricing`.
 - `PUT /api/employees/[id]` bloquea nuevos registros faciales cuando `faceRegistered` pasa de `false` a `true` o se agrega `faceEmbedding` y ya se alcanzó `maxEmployees`.
 - Re-registro facial de empleados que ya tenían rostro sí está permitido aunque el cupo esté lleno.
+
+## Facturación — Cuenti Pay
+- **Modelo:** plan gratis (hasta `freeEmployeeLimit` empleados, sin API/MCP) y plan pago **mensual** (COP/USD por empleado, precio en `BillingConfig`, leído desde DB — nunca quemado en UI/landing).
+- **Cobro por periodo:** 30 días (`BILLING_PERIOD_DAYS`); addons de nuevos empleados se prorratean sobre el periodo vigente (`src/lib/billing/pricing.ts`).
+- **Servicio:** `src/lib/billing/service.ts` (`buildQuote`, `createCheckout`, `cancelPendingInvoice`, `handleBillingWebhook`, `getCompanyBillingStatus`). Máx. 1 factura pendiente por empresa.
+- **Cliente HTTP:** `src/lib/billing/cuenti-pay.client.ts` — `createPaymentDocument` (grabarDocumentoSimple) y `voidTransaction` (anularTransacion). Tolera respuestas no-JSON.
+- **APIs:** `GET/POST /api/billing` (quote/checkout/invoices), `GET /api/billing/config` (público, consumido por landing), `POST /api/billing/invoices/[invoiceId]/cancel`, webhook público `POST /api/billing/webhook/[codigoUnico]` (valida `x-billing-webhook-secret` opcional), `POST /api/billing/renewal-reminders` (cron, `CRON_SECRET`).
+- **Config:** vars `CUENTI_PAY_*` en `src/lib/billing/env.ts`; `codigoUnico` numérico en `src/lib/billing/codigo-unico.ts`. Ver `docs/billing-cuenti-pay.md`.
 
 ## Reportes
 - Pestaña **Detallado** en `/reports`: rango de fechas, filtros por empleado/sucursal, opción "Mostrar solo ausencias", exportación a Excel/PDF.
@@ -389,7 +397,7 @@ src/app/api/
 - [x] Configuración `/settings` + Integraciones (Tokens | MCP | Webhooks) + Perfil `/profile`
 - [x] API pública v1 con autenticación Bearer y Swagger UI en `/api/v1/docs`
 - [x] Todas las API routes: companies, branches, employees, positions, shifts, employee-shifts, incident-types, incidents, users, attendance, reports, api-tokens, face, audit/search, v1, webhooks
-- [x] Email verification en registro, trial 7 días y login bloqueado para email no verificado
+- [x] Email verification en registro (código 6 dígitos) y login bloqueado para email no verificado; cuentas nuevas en plan gratis
 - [x] Refresh token 7 días + access token 15 minutos + endpoint `/api/auth/refresh`
 - [x] Suscripción vencida con `/subscription-expired` y `/pricing` pública básica
 - [x] Límite `maxEmployees` aplicado solo a nuevos registros faciales
@@ -447,4 +455,4 @@ src/app/api/
 - Tras cambiar `schema.prisma`: `pnpm db:generate && pnpm db:push` y **reiniciar** el proceso `next` (el client no hot-reloadea).
 - El reset de BigInt ya fue ejecutado en desarrollo y eliminó los datos anteriores; requiere `db:seed` para restaurar las credenciales de prueba.
 
-*Última actualización: 2026-07-20 (noche). BigInt autoincrement + serialización de IDs; build verificado; MCP OAuth 2.1 adicional + Bearer; webhooks 1+3×10min; Integraciones Tokens|MCP|Webhooks; deps exactas; faceMatchThreshold; header sin buscador. Dev: `http://localhost:7578`, MCP `:4101`.*
+*Última actualización: 2026-07-20 (noche). Cuenti Pay: plan gratis (default 3 empleados) + plan pago **mensual** COP/USD por empleado, precios/límites leídos desde `BillingConfig` en DB (nunca quemados); checkout/webhook/void + landing dinámica. BigInt autoincrement + serialización de IDs; build verificado; MCP OAuth 2.1 adicional + Bearer; webhooks 1+3×10min; Integraciones Tokens|MCP|Webhooks; deps exactas; faceMatchThreshold; header sin buscador. Dev: `http://localhost:7578`, MCP `:4101`.*
