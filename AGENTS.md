@@ -258,7 +258,7 @@ src/app/api/
 - Protección de rutas: `src/middleware.ts` valida JWT en cada request a `(dashboard)`
 - Datos biométricos: solo se guarda el embedding (vector numérico), nunca la imagen original en producción
 - Consentimiento biométrico: `Employee.biometricConsentAt` (timestamp de aceptación)
-- Nuevos registros requieren verificación de email con **código de 6 dígitos** (vence en 15 min). `POST /api/auth/register` envía el código por correo; el usuario lo ingresa en `/verify-email` vía `POST /api/auth/verify-email`. Reenvío: `POST /api/auth/resend-verification`. Trial de 7 días con 10 empleados incluidos.
+- Nuevos registros requieren verificación de email con **código de 6 dígitos** (vence en 15 min). `POST /api/auth/register` envía el código por correo; el usuario lo ingresa en `/verify-email` vía `POST /api/auth/verify-email`. Reenvío: `POST /api/auth/resend-verification`. Las cuentas nuevas inician en **plan gratis** (hasta `BillingConfig.freeEmployeeLimit`, default 3 empleados; sin API/MCP), no trial de 7 días.
 - Usuarios con `emailVerifiedAt = null` no pueden iniciar sesión.
 - `/api/auth/refresh` renueva access token usando cookie `refresh-token`; middleware también renueva access token para navegación de páginas cuando aplica.
 
