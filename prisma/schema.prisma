@@ -1,14 +1,16 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url       = env("DATABASE_URL")
+  extensions = [vector]
 }
 
 model Company {
-  id                      String              @id @default(cuid())
+  id                      BigInt              @id @default(autoincrement())
   name                    String
   legalName               String
   taxId                   String              @unique
@@ -56,8 +58,8 @@ model Company {
 }
 
 model Branch {
-  id                     String              @id @default(cuid())
-  companyId              String
+  id                     BigInt              @id @default(autoincrement())
+  companyId              BigInt
   name                   String
   code                   String
   address                String?
@@ -88,8 +90,8 @@ model Branch {
 }
 
 model Position {
-  id        String     @id @default(cuid())
-  companyId String
+  id        BigInt     @id @default(autoincrement())
+  companyId BigInt
   name      String
   active    Boolean    @default(true)
   createdAt DateTime   @default(now())
@@ -102,8 +104,8 @@ model Position {
 }
 
 model Shift {
-  id            String          @id @default(cuid())
-  companyId     String
+  id            BigInt          @id @default(autoincrement())
+  companyId     BigInt
   name          String
   mondayStart   String?
   mondayEnd     String?
@@ -130,9 +132,9 @@ model Shift {
 }
 
 model EmployeeShift {
-  id        String    @id @default(cuid())
-  employeeId String
-  shiftId   String
+  id        BigInt    @id @default(autoincrement())
+  employeeId BigInt
+  shiftId   BigInt
   startDate DateTime
   endDate   DateTime?
   createdAt DateTime  @default(now())
@@ -147,8 +149,8 @@ model EmployeeShift {
 }
 
 model IncidentType {
-  id                 String     @id @default(cuid())
-  companyId          String
+  id                 BigInt     @id @default(autoincrement())
+  companyId          BigInt
   name               String
   active             Boolean    @default(true)
   /// Justifica no marcar (vacaciones, incapacidad, permiso, día compensatorio)
@@ -167,12 +169,12 @@ model IncidentType {
 }
 
 model Incident {
-  id             String       @id @default(cuid())
-  companyId      String
-  employeeId     String?
-  branchId       String?
-  shiftId        String?      // Para novedades colectivas por turno
-  incidentTypeId String
+  id             BigInt       @id @default(autoincrement())
+  companyId      BigInt
+  employeeId     BigInt?
+  branchId       BigInt?
+  shiftId        BigInt?      // Para novedades colectivas por turno
+  incidentTypeId BigInt
   date           DateTime
   overrideStart  String?
   overrideEnd    String?
@@ -194,8 +196,8 @@ model Incident {
 }
 
 model ApiToken {
-  id          String    @id @default(cuid())
-  companyId   String
+  id          BigInt    @id @default(autoincrement())
+  companyId   BigInt
   name        String
   token       String    @unique
   /// Prefijo del token en claro (ej. "cuenti_a1b2c3d4") para lookup O(1) sin escanear todo el SaaS.
@@ -215,20 +217,20 @@ model ApiToken {
 }
 
 model Employee {
-  id                 String              @id @default(cuid())
-  companyId          String
-  branchId           String
+  id                 BigInt              @id @default(autoincrement())
+  companyId          BigInt
+  branchId           BigInt
   fullName           String
   documentType       DocumentType        @default(CC)
   documentNumber     String
-  positionId         String?
+  positionId         BigInt?
   email              String?
   phone              String?
   photo              String?             @db.Text
   status             Status              @default(ACTIVE)
   workScheduleId     String?
   faceRegistered     Boolean             @default(false)
-  faceEmbeddingId    String?
+  faceEmbeddingId    BigInt?
   faceRegisteredAt   DateTime?
   biometricConsentAt DateTime?
   hireDate           DateTime?
@@ -254,10 +256,10 @@ model Employee {
 }
 
 model AttendanceRecord {
-  id               String           @id @default(cuid())
-  companyId        String
-  branchId         String
-  employeeId       String
+  id               BigInt           @id @default(autoincrement())
+  companyId        BigInt
+  branchId         BigInt
+  employeeId       BigInt
   type             AttendanceType
   recordedAt       DateTime         @default(now())
   validationStatus ValidationResult @default(SUCCESS)
@@ -286,10 +288,10 @@ model AttendanceRecord {
 }
 
 model FaceValidationLog {
-  id              String           @id @default(cuid())
-  companyId       String
-  branchId        String?
-  employeeId      String?
+  id              BigInt           @id @default(autoincrement())
+  companyId       BigInt
+  branchId        BigInt?
+  employeeId      BigInt?
   result          ValidationResult
   reason          String?
   confidenceScore Float?
@@ -310,15 +312,15 @@ model FaceValidationLog {
 }
 
 model User {
-  id                     String     @id @default(cuid())
-  companyId              String?
+  id                     BigInt     @id @default(autoincrement())
+  companyId              BigInt?
   name                   String
   email                  String     @unique
   password               String
   role                   UserRole   @default(REPORT_VIEWER)
   status                 Status     @default(ACTIVE)
   avatar                 String?
-  branchId               String?
+  branchId               BigInt?
   lastLoginAt            DateTime?
 
   // Permisos granulares (además del rol)
@@ -345,9 +347,9 @@ model User {
 }
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  companyId String?
-  userId    String?
+  id        BigInt   @id @default(autoincrement())
+  companyId BigInt?
+  userId    BigInt?
   action    String
   entity    String
   entityId  String?
@@ -407,8 +409,8 @@ enum ValidationResult {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 model WebhookSubscription {
-  id          String    @id @default(cuid())
-  companyId   String
+  id          BigInt    @id @default(autoincrement())
+  companyId   BigInt
   url         String
   events      String    // JSON array: ["employee.created", "attendance.checked_in", ...]
   secret      String    // HMAC-SHA256 para firmar payloads
@@ -424,8 +426,8 @@ model WebhookSubscription {
 }
 
 model WebhookDelivery {
-  id             String   @id @default(cuid())
-  subscriptionId String
+  id             BigInt   @id @default(autoincrement())
+  subscriptionId BigInt
   event          String
   payload        Json
   attempt        Int      @default(1)
@@ -438,7 +440,7 @@ model WebhookDelivery {
   nextRetryAt    DateTime?
   subscription   WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
   company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  companyId      String
+  companyId      BigInt
 
   @@index([subscriptionId])
   @@index([status])
@@ -447,8 +449,8 @@ model WebhookDelivery {
 }
 
 model Payment {
-  id                 String    @id @default(cuid())
-  companyId          String
+  id                 BigInt    @id @default(autoincrement())
+  companyId          BigInt
   wompiReference     String    @unique
   amount             Int       // En centavos
   billingCycle       String    // "monthly" | "yearly"
@@ -465,8 +467,8 @@ model Payment {
 }
 
 model LateReportLog {
-  id             String    @id @default(cuid())
-  branchId       String
+  id             BigInt    @id @default(autoincrement())
+  branchId       BigInt
   date           DateTime
   recipientCount Int
   lateCount      Int
@@ -476,7 +478,7 @@ model LateReportLog {
   errorMessage   String?   @db.Text
   branch         Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
   company        Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  companyId      String
+  companyId      BigInt
 
   @@index([branchId])
   @@index([date])

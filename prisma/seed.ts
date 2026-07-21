@@ -167,8 +167,8 @@ async function main() {
   console.log("   admin.textiles@cuenti.com / Admin2024!");
 
   // ─── Positions ─────────────────────────────────────────────────────────────
-  const company1Positions = new Map<string, string>();
-  const company2Positions = new Map<string, string>();
+  const company1Positions = new Map<string, bigint>();
+  const company2Positions = new Map<string, bigint>();
   const allPositionNames = [
     "general",
     "Coordinadora de Ventas", "Analista Contable", "Asistente de Gerencia",
@@ -283,48 +283,45 @@ async function main() {
   console.log("✅ Tipos de novedad creados");
 
   // ─── Shifts ─────────────────────────────────────────────────────────────────
-  const shiftsData = [
-    {
-      id: "shift-c1-diurno",
-      name: "Turno diurno",
+  const shiftNames = [
+    { name: "Turno diurno", code: "diurno" },
+    { name: "Turno nocturno", code: "nocturno" },
+    { name: "Medio tiempo", code: "medio" },
+  ];
+  const shiftSchedules = {
+    diurno: {
       mondayStart: "08:00", mondayEnd: "17:00",
       tuesdayStart: "08:00", tuesdayEnd: "17:00",
       wednesdayStart: "08:00", wednesdayEnd: "17:00",
       thursdayStart: "08:00", thursdayEnd: "17:00",
       fridayStart: "08:00", fridayEnd: "17:00",
     },
-    {
-      id: "shift-c1-nocturno",
-      name: "Turno nocturno",
+    nocturno: {
       mondayStart: "20:00", mondayEnd: "06:00",
       tuesdayStart: "20:00", tuesdayEnd: "06:00",
       wednesdayStart: "20:00", wednesdayEnd: "06:00",
       thursdayStart: "20:00", thursdayEnd: "06:00",
       fridayStart: "20:00", fridayEnd: "06:00",
     },
-    {
-      id: "shift-c1-medio",
-      name: "Medio tiempo",
+    medio: {
       mondayStart: "08:00", mondayEnd: "12:00",
       tuesdayStart: "08:00", tuesdayEnd: "12:00",
       wednesdayStart: "08:00", wednesdayEnd: "12:00",
       thursdayStart: "08:00", thursdayEnd: "12:00",
       fridayStart: "08:00", fridayEnd: "12:00",
     },
-  ];
-  for (const shift of shiftsData) {
-    const { id, ...shiftFields } = shift;
-    await prisma.shift.upsert({
-      where: { id },
-      update: {},
-      create: { companyId: company1.id, active: true, id, ...shiftFields },
+  };
+  const company1Shifts = new Map<string, bigint>();
+  const company2Shifts = new Map<string, bigint>();
+  for (const { name, code } of shiftNames) {
+    const s1 = await prisma.shift.create({
+      data: { companyId: company1.id, name, active: true, ...shiftSchedules[code as keyof typeof shiftSchedules] },
     });
-    const id2 = id.replace("c1", "c2");
-    await prisma.shift.upsert({
-      where: { id: id2 },
-      update: {},
-      create: { companyId: company2.id, active: true, id: id2, ...shiftFields },
+    company1Shifts.set(code, s1.id);
+    const s2 = await prisma.shift.create({
+      data: { companyId: company2.id, name, active: true, ...shiftSchedules[code as keyof typeof shiftSchedules] },
     });
+    company2Shifts.set(code, s2.id);
   }
   console.log("✅ Turnos creados");
 
@@ -334,12 +331,14 @@ async function main() {
   const company2Employees = employees.filter((e) => e.companyId === company2.id);
 
   for (const [index, employee] of company1Employees.entries()) {
-    const shiftId =
+    const shiftCode =
       index % 3 === 0
-        ? "shift-c1-diurno"
+        ? "diurno"
         : index % 3 === 1
-          ? "shift-c1-nocturno"
-          : "shift-c1-medio";
+          ? "nocturno"
+          : "medio";
+    const shiftId = company1Shifts.get(shiftCode);
+    if (!shiftId) continue;
     const existing = await prisma.employeeShift.findFirst({
       where: { employeeId: employee.id, shiftId },
     });
@@ -354,12 +353,14 @@ async function main() {
     }
   }
   for (const [index, employee] of company2Employees.entries()) {
-    const shiftId =
+    const shiftCode =
       index % 3 === 0
-        ? "shift-c2-diurno"
+        ? "diurno"
         : index % 3 === 1
-          ? "shift-c2-nocturno"
-          : "shift-c2-medio";
+          ? "nocturno"
+          : "medio";
+    const shiftId = company2Shifts.get(shiftCode);
+    if (!shiftId) continue;
     const existing = await prisma.employeeShift.findFirst({
       where: { employeeId: employee.id, shiftId },
     });

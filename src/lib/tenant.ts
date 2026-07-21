@@ -2,7 +2,7 @@ import type { UserRole } from "@/types/user";
 
 export interface TenantSession {
   userId: string;
-  companyId: string | null;
+  companyId: bigint | null;
   role: UserRole;
 }
 
@@ -12,8 +12,8 @@ export interface TenantSession {
  *
  * Business rule: one user account belongs to exactly one company.
  */
-export function getCompanyFilter(session: TenantSession): { companyId?: string } {
+export function getCompanyFilter(session: TenantSession): { companyId?: bigint } {
   if (session.role === "SAAS_SUPER_ADMIN") return {};
-  if (!session.companyId) return { companyId: "__none__" }; // no data returned
+  if (!session.companyId) return { companyId: -1n }; // no data returned
   return { companyId: session.companyId };
 }

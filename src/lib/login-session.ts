@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { User } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { bigintToString } from "@/lib/bigint";
 import {
   signAccessToken,
   signRefreshToken,
@@ -33,8 +34,8 @@ export async function createAuthenticatedLoginResponse(
     Boolean(options?.impersonatorId)
   );
   const payload: TokenPayload = {
-    userId: user.id,
-    companyId: user.companyId,
+    userId: bigintToString(user.id),
+    companyId: user.companyId ? bigintToString(user.companyId) : null,
     role: effectiveRole,
     email: user.email,
     name: user.name,
@@ -66,11 +67,11 @@ export async function createAuthenticatedLoginResponse(
 
   const response = NextResponse.json({
     user: {
-      id: user.id,
+      id: bigintToString(user.id),
       name: user.name,
       email: user.email,
       role: effectiveRole,
-      companyId: user.companyId,
+      companyId: user.companyId ? bigintToString(user.companyId) : null,
       companyName,
       avatar: user.avatar,
       status: user.status,

@@ -12,7 +12,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
     changeFrequency: path === "/" ? "weekly" : "monthly",
     priority: path === "/" ? 1 : path === "/producto" ? 0.9 : 0.8,
   }));
-
   const resources: MetadataRoute.Sitemap = resourceSlugs.map((slug) => ({
     url: absoluteUrl(`/recursos/${slug}`),
     lastModified: updatedAt,

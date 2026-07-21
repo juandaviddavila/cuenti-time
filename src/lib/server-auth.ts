@@ -16,8 +16,8 @@ import { getCompanyFilter, type TenantSession } from "@/lib/tenant";
 import type { UserRole } from "@/types/user";
 
 export interface ServerSession extends TenantSession {
-  userId: string;
-  companyId: string | null;
+  userId: bigint;
+  companyId: bigint | null;
   role: UserRole;
   email: string;
   name: string;
@@ -100,7 +100,7 @@ export function getJwtRefreshSecret(): Uint8Array {
 }
 
 export async function getUserPermissionFields(
-  userId: string
+  userId: bigint
 ): Promise<UserPermissionFields | null> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -130,7 +130,7 @@ export async function requireIntegrationAccess(
   return effectivePermissions;
 }
 
-export async function userBypassesGeofence(userId: string): Promise<boolean> {
+export async function userBypassesGeofence(userId: bigint): Promise<boolean> {
   const permissions = await getUserPermissionFields(userId);
   return permissions ? bypassesGeofence(permissions) : false;
 }

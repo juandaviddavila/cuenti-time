@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { bigintToString } from "@/lib/bigint";
 import bcrypt from "bcryptjs";
 
 export interface ApiTokenContext {
@@ -56,8 +57,8 @@ export async function validateApiTokenRaw(
     });
 
     return {
-      tokenId: token.id,
-      companyId: token.companyId,
+      tokenId: bigintToString(token.id),
+      companyId: bigintToString(token.companyId),
       scopes: token.scopes.split(",").map((s) => s.trim()).filter(Boolean),
     };
   }
@@ -77,8 +78,8 @@ export function hasScope(token: ApiTokenContext, scope: "read" | "write"): boole
  * Usar SIEMPRE antes de devolver datos por id.
  */
 export function belongsToTokenCompany(
-  resourceCompanyId: string | null | undefined,
+  resourceCompanyId: bigint | null | undefined,
   token: ApiTokenContext
 ): boolean {
-  return Boolean(resourceCompanyId) && resourceCompanyId === token.companyId;
+  return Boolean(resourceCompanyId) && bigintToString(resourceCompanyId!) === token.companyId;
 }

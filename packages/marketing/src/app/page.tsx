@@ -9,7 +9,9 @@ import {
   ScanFace,
   Sparkles,
 } from "lucide-react";
+import { JsonLd } from "@/components/json-ld";
 import { RoiCalculator } from "@/components/roi-calculator";
+import { absoluteUrl, siteConfig } from "@/lib/site";
 
 const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:7578").replace(
   /\/$/,
@@ -54,9 +56,70 @@ const steps = [
   ["Entiende", "Consulta asistencia, novedades y reportes en un solo lugar."],
 ];
 
+const faqs = [
+  {
+    question: "¿La prueba requiere tarjeta de crédito?",
+    answer:
+      "No. Puedes crear una cuenta y probar cuenti time durante 7 días con hasta 10 registros faciales, sin ingresar una tarjeta.",
+  },
+  {
+    question: "¿La geocerca rastrea al trabajador todo el día?",
+    answer:
+      "No. La ubicación se solicita al marcar desde un dispositivo móvil y se usa para calcular la distancia a la sucursal. No es un sistema de seguimiento continuo.",
+  },
+  {
+    question: "¿cuenti time reemplaza un software de nómina?",
+    answer:
+      "No. Organiza la evidencia de asistencia, turnos y novedades para facilitar la revisión previa a nómina. Puede integrarse con otros sistemas mediante API y webhooks.",
+  },
+  {
+    question: "¿Qué información facial almacena el sistema?",
+    answer:
+      "El producto trabaja con un descriptor numérico del rostro para comparar similitud. La implementación requiere consentimiento biométrico y no necesita conservar la fotografía original.",
+  },
+] as const;
+
 export default function HomePage() {
   return (
     <>
+      <JsonLd
+        data={{
+          "@context": "https://schema.org",
+          "@graph": [
+            {
+              "@type": "Organization",
+              name: siteConfig.name,
+              url: siteConfig.siteUrl,
+              logo: absoluteUrl("/logo-simbolo.svg"),
+            },
+            {
+              "@type": "SoftwareApplication",
+              name: siteConfig.name,
+              applicationCategory: "BusinessApplication",
+              operatingSystem: "Web",
+              description: siteConfig.description,
+              url: siteConfig.siteUrl,
+              offers: {
+                "@type": "Offer",
+                price: "0",
+                priceCurrency: "COP",
+                description: "Prueba de 7 días con hasta 10 registros faciales",
+              },
+            },
+            {
+              "@type": "FAQPage",
+              mainEntity: faqs.map((faq) => ({
+                "@type": "Question",
+                name: faq.question,
+                acceptedAnswer: {
+                  "@type": "Answer",
+                  text: faq.answer,
+                },
+              })),
+            },
+          ],
+        }}
+      />
       <section className="relative overflow-hidden border-b border-black/10 bg-[#f6f3eb]">
         <div className="absolute inset-0 fine-grid opacity-60" />
         <div className="page-shell relative grid min-h-[calc(100vh-76px)] items-center gap-12 py-16 lg:grid-cols-[1.05fr_0.95fr] lg:py-20">
@@ -81,7 +144,7 @@ export default function HomePage() {
                 href={`${appUrl}/register`}
                 className="group inline-flex items-center justify-center gap-2 rounded-full bg-[#171714] px-7 py-4 font-extrabold text-white transition hover:bg-[#34342f]"
               >
-                Empezar prueba gratis
+                Empezar prueba de 7 días
                 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" aria-hidden="true" />
               </a>
               <Link
@@ -93,10 +156,10 @@ export default function HomePage() {
             </div>
             <div className="mt-7 flex flex-wrap gap-x-5 gap-y-2 text-sm text-[#68655d]">
               <span className="inline-flex items-center gap-1.5">
-                <CheckCircle2 className="h-4 w-4 text-[#8d6b08]" /> Sin tarjeta para empezar
+                <CheckCircle2 className="h-4 w-4 text-[#8d6b08]" /> 10 registros faciales
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <CheckCircle2 className="h-4 w-4 text-[#8d6b08]" /> Configuración guiada
+                <CheckCircle2 className="h-4 w-4 text-[#8d6b08]" /> Reportes incluidos
               </span>
             </div>
           </div>
@@ -179,6 +242,62 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section className="border-b border-black/10 bg-[#171714] py-16 text-white md:py-20">
+        <div className="page-shell">
+          <div className="grid gap-10 md:grid-cols-3">
+            <div>
+              <p className="text-4xl font-extrabold tracking-[-0.055em] text-sun">
+                80,15 %
+              </p>
+              <p className="mt-3 leading-7 text-white/65">
+                de precisión promedio de nómina en el estudio estadounidense
+                EY 2022; casi una de cada cinco requirió corrección.
+              </p>
+            </div>
+            <div>
+              <p className="text-4xl font-extrabold tracking-[-0.055em] text-sun">
+                US$291
+              </p>
+              <p className="mt-3 leading-7 text-white/65">
+                fue el costo medio directo e indirecto por error reportado por
+                EY. Es una referencia internacional, no una tarifa colombiana.
+              </p>
+            </div>
+            <div>
+              <p className="text-4xl font-extrabold tracking-[-0.055em] text-sun">
+                745.000
+              </p>
+              <p className="mt-3 leading-7 text-white/65">
+                muertes estimadas por OMS/OIT en 2016 asociadas a jornadas de
+                55 horas o más. Registrar también ayuda a detectar sobrecarga.
+              </p>
+            </div>
+          </div>
+          <p className="mt-10 text-xs leading-5 text-white/45">
+            Fuentes:{" "}
+            <a
+              href="https://eyquest.com/files/Cost_and_Risks_Due_to_Payroll_Errors_2022_Final.pdf"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-4 hover:text-white"
+            >
+              EY, HR Processing Risk and Cost Survey (2022)
+            </a>{" "}
+            y{" "}
+            <a
+              href="https://www.who.int/news/item/17-05-2021-long-working-hours-increasing-deaths-from-heart-disease-and-stroke-who-ilo"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-4 hover:text-white"
+            >
+              OMS/OIT, estimación global sobre jornadas extensas
+            </a>
+            . Estas cifras describen sus estudios; el resultado de cada empresa
+            debe medirse con una línea base propia.
+          </p>
+        </div>
+      </section>
+
       <section className="bg-[#fffdf7] py-20 md:py-28">
         <div className="page-shell">
           <div className="grid gap-8 lg:grid-cols-2">
@@ -234,6 +353,58 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section className="border-b border-black/10 bg-[#fffdf7] py-20 md:py-28">
+        <div className="page-shell">
+          <div className="grid gap-8 lg:grid-cols-[0.85fr_1.15fr] lg:gap-20">
+            <div>
+              <span className="eyebrow">Evidencia responsable</span>
+              <h2 className="section-title mt-5 text-balance">
+                Control útil sin convertirlo en vigilancia.
+              </h2>
+              <p className="mt-6 max-w-lg text-lg leading-8 text-black/60">
+                La tecnología ayuda cuando la política es clara: finalidad
+                definida, acceso limitado, correcciones trazables y revisión
+                humana.
+              </p>
+            </div>
+            <div className="grid gap-px overflow-hidden rounded-[2rem] border border-black/10 bg-black/10">
+              <Link
+                href="/recursos/ley-2466-2025-horas-extra-colombia"
+                className="group bg-paper p-7 transition hover:bg-white sm:p-9"
+              >
+                <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-black/45">
+                  Jornada y horas extra
+                </p>
+                <h3 className="mt-3 text-2xl font-extrabold tracking-[-0.035em]">
+                  Registros preparados para explicar la jornada.
+                </h3>
+                <p className="mt-3 leading-7 text-black/60">
+                  La Ley 2466 de 2025 exige detallar el trabajo suplementario.
+                  El software organiza evidencia; la empresa conserva la
+                  responsabilidad de revisar y liquidar.
+                </p>
+              </Link>
+              <Link
+                href="/recursos/biometria-laboral-ley-1581"
+                className="group bg-paper p-7 transition hover:bg-white sm:p-9"
+              >
+                <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-black/45">
+                  Datos sensibles
+                </p>
+                <h3 className="mt-3 text-2xl font-extrabold tracking-[-0.035em]">
+                  Biometría con consentimiento y propósito.
+                </h3>
+                <p className="mt-3 leading-7 text-black/60">
+                  Los datos biométricos requieren diligencia reforzada bajo la
+                  Ley 1581. cuenti time guarda el descriptor numérico y permite
+                  documentar el consentimiento.
+                </p>
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="integraciones" className="overflow-hidden bg-[#f2eee4] py-20 md:py-28">
         <div className="page-shell grid items-center gap-12 lg:grid-cols-2 lg:gap-20">
           <div>
@@ -277,6 +448,35 @@ export default function HomePage() {
       </section>
 
       <RoiCalculator />
+
+      <section className="border-y border-black/10 bg-paper py-20 md:py-28">
+        <div className="page-shell grid gap-12 lg:grid-cols-[0.7fr_1.3fr]">
+          <div>
+            <span className="eyebrow">Preguntas frecuentes</span>
+            <h2 className="section-title mt-5 text-balance">
+              Lo importante, sin letra pequeña.
+            </h2>
+          </div>
+          <div className="divide-y divide-black/10 border-y border-black/10">
+            {faqs.map((faq) => (
+              <details key={faq.question} className="group py-6">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-6 text-lg font-extrabold [&::-webkit-details-marker]:hidden">
+                  {faq.question}
+                  <span
+                    aria-hidden="true"
+                    className="text-2xl font-normal transition group-open:rotate-45"
+                  >
+                    +
+                  </span>
+                </summary>
+                <p className="max-w-2xl pt-4 leading-7 text-black/65">
+                  {faq.answer}
+                </p>
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
 
       <section className="relative overflow-hidden bg-[#fffdf7] py-20 md:py-28">
         <div className="absolute inset-0 dot-field opacity-40" />

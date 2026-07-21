@@ -10,6 +10,7 @@ const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:7578").repl
 const navigation = [
   { href: "/producto", label: "Producto" },
   { href: "/precios", label: "Precios" },
+  { href: "/recursos", label: "Recursos" },
   { href: "/#integraciones", label: "Integraciones" },
 ];
 
@@ -49,7 +50,7 @@ export function SiteHeader() {
             href={`${appUrl}/register`}
             className="group inline-flex items-center gap-2 rounded-full bg-[#171714] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#34342f]"
           >
-            Probar 7 días
+            Prueba de 7 días
             <ArrowUpRight
               className="h-4 w-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
               aria-hidden="true"
@@ -81,7 +82,7 @@ export function SiteHeader() {
                 href={`${appUrl}/register`}
                 className="mt-1 rounded-2xl bg-[#f9c626] px-4 py-3.5 text-center font-extrabold"
               >
-                Probar gratis
+                Probar 7 días
               </a>
             </nav>
           </div>

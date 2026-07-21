@@ -1,6 +1,7 @@
 import { createHmac } from "crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { bigintToString, bigintReplacer, stringToBigint } from "@/lib/bigint";
 import {
   isWebhookEvent,
   parseSubscriptionEvents,
@@ -37,7 +38,7 @@ function logWebhook(
     message,
     ...meta,
   };
-  const line = `[webhook] ${message} ${JSON.stringify(payload)}`;
+  const line = `[webhook] ${message} ${JSON.stringify(payload, bigintReplacer)}`;
   if (level === "error") console.error(line);
   else if (level === "warn") console.warn(line);
   else console.info(line);
@@ -80,7 +81,7 @@ function scheduleInProcessRetry(deliveryId: string, delayMs: number): void {
 
 async function runScheduledRetry(deliveryId: string): Promise<void> {
   const delivery = await prisma.webhookDelivery.findUnique({
-    where: { id: deliveryId },
+    where: { id: stringToBigint(deliveryId) },
     select: { id: true, status: true, attempt: true, nextRetryAt: true },
   });
 
@@ -102,7 +103,7 @@ async function runScheduledRetry(deliveryId: string): Promise<void> {
   });
 
   await prisma.webhookDelivery.update({
-    where: { id: deliveryId },
+    where: { id: delivery.id },
     data: { attempt: delivery.attempt + 1, nextRetryAt: null },
   });
   await attemptDelivery(deliveryId);
@@ -113,15 +114,16 @@ async function runScheduledRetry(deliveryId: string): Promise<void> {
  * e intenta el primer envío en background. Nunca filtra por otra empresa.
  */
 export async function emitWebhookEvent(params: {
-  companyId: string;
+  companyId: string | bigint;
   event: WebhookEventType;
   data: Record<string, unknown>;
 }): Promise<void> {
-  const { companyId, event, data } = params;
+  const companyId = typeof params.companyId === "bigint" ? bigintToString(params.companyId) : params.companyId;
+  const { event, data } = params;
   if (!companyId || !isWebhookEvent(event)) return;
 
   const subscriptions = await prisma.webhookSubscription.findMany({
-    where: { companyId, active: true },
+    where: { companyId: stringToBigint(companyId), active: true },
     select: {
       id: true,
       url: true,
@@ -149,7 +151,7 @@ export async function emitWebhookEvent(params: {
   const createdAt = new Date();
 
   for (const sub of matching) {
-    if (sub.companyId !== companyId) continue;
+    if (sub.companyId !== stringToBigint(companyId)) continue;
 
     const payload = {
       event,
@@ -161,7 +163,7 @@ export async function emitWebhookEvent(params: {
     const delivery = await prisma.webhookDelivery.create({
       data: {
         subscriptionId: sub.id,
-        companyId,
+        companyId: stringToBigint(companyId),
         event,
         payload,
         attempt: 1,
@@ -171,17 +173,17 @@ export async function emitWebhookEvent(params: {
     });
 
     logWebhook("info", "delivery encolado", {
-      deliveryId: delivery.id,
+      deliveryId: bigintToString(delivery.id),
       companyId,
       event,
-      subscriptionId: sub.id,
+      subscriptionId: bigintToString(sub.id),
       url: safeWebhookUrl(sub.url),
       attempt: 1,
     });
 
-    void attemptDelivery(delivery.id).catch((err) => {
+    void attemptDelivery(bigintToString(delivery.id)).catch((err) => {
       logWebhook("error", "delivery excepción no controlada", {
-        deliveryId: delivery.id,
+        deliveryId: bigintToString(delivery.id),
         companyId,
         event,
         error: err instanceof Error ? err.message : String(err),
@@ -192,7 +194,7 @@ export async function emitWebhookEvent(params: {
 
 /** Disparo no bloqueante seguro para API routes. */
 export function scheduleWebhookEvent(params: {
-  companyId: string;
+  companyId: string | bigint;
   event: WebhookEventType;
   data: Record<string, unknown>;
 }): void {
@@ -209,7 +211,7 @@ export async function attemptDelivery(
   deliveryId: string
 ): Promise<"SUCCESS" | "FAILED" | "PENDING"> {
   const delivery = await prisma.webhookDelivery.findUnique({
-    where: { id: deliveryId },
+    where: { id: stringToBigint(deliveryId) },
     include: {
       subscription: {
         select: {
@@ -232,9 +234,9 @@ export async function attemptDelivery(
   const url = safeWebhookUrl(delivery.subscription.url);
   const baseMeta = {
     deliveryId,
-    companyId: delivery.companyId,
+    companyId: bigintToString(delivery.companyId),
     event: delivery.event,
-    subscriptionId: delivery.subscriptionId,
+    subscriptionId: bigintToString(delivery.subscriptionId),
     url,
     attempt: delivery.attempt,
     maxAttempts: WEBHOOK_MAX_ATTEMPTS,
@@ -242,7 +244,7 @@ export async function attemptDelivery(
 
   if (delivery.companyId !== delivery.subscription.companyId) {
     await prisma.webhookDelivery.update({
-      where: { id: deliveryId },
+      where: { id: delivery.id },
       data: {
         status: "FAILED",
         errorMessage: "Inconsistencia de empresa entre delivery y suscripción",
@@ -260,7 +262,7 @@ export async function attemptDelivery(
 
   if (!delivery.subscription.active) {
     await prisma.webhookDelivery.update({
-      where: { id: deliveryId },
+      where: { id: delivery.id },
       data: {
         status: "FAILED",
         errorMessage: "Suscripción inactiva",
@@ -282,20 +284,20 @@ export async function attemptDelivery(
 
   const payload = delivery.payload as Record<string, unknown>;
   const envelope: WebhookEnvelope = {
-    id: delivery.id,
+    id: bigintToString(delivery.id),
     event: delivery.event as WebhookEventType,
     createdAt:
       typeof payload.createdAt === "string"
         ? payload.createdAt
         : delivery.scheduledAt.toISOString(),
-    companyId: delivery.companyId,
+    companyId: bigintToString(delivery.companyId),
     data:
       payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
         ? (payload.data as Record<string, unknown>)
         : payload,
   };
 
-  const body = JSON.stringify(envelope);
+  const body = JSON.stringify(envelope, bigintReplacer);
   const signature = signPayload(delivery.subscription.secret, body);
   const timeoutMs = Math.min(Math.max(delivery.subscription.timeoutMs, 500), 30000);
 
@@ -308,7 +310,7 @@ export async function attemptDelivery(
         "Content-Type": "application/json",
         "User-Agent": "cuenti-time-webhooks/1.0",
         "X-Cuenti-Event": delivery.event,
-        "X-Cuenti-Delivery": delivery.id,
+        "X-Cuenti-Delivery": bigintToString(delivery.id),
         "X-Cuenti-Signature": signature,
         "X-Cuenti-Timestamp": envelope.createdAt,
       },
@@ -326,7 +328,7 @@ export async function attemptDelivery(
         inProcessRetryTimers.delete(deliveryId);
       }
       await prisma.webhookDelivery.update({
-        where: { id: deliveryId },
+        where: { id: delivery.id },
         data: {
           status: "SUCCESS",
           responseStatus: res.status,
@@ -345,7 +347,7 @@ export async function attemptDelivery(
       return "SUCCESS";
     }
 
-    return await markDeliveryFailure(deliveryId, delivery.attempt, {
+    return await markDeliveryFailure(delivery.id, delivery.attempt, {
       responseStatus: res.status,
       responseBody,
       errorMessage: `HTTP ${res.status}`,
@@ -353,7 +355,7 @@ export async function attemptDelivery(
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error de red";
-    return markDeliveryFailure(deliveryId, delivery.attempt, {
+    return markDeliveryFailure(delivery.id, delivery.attempt, {
       errorMessage: message,
       meta: baseMeta,
     });
@@ -361,7 +363,7 @@ export async function attemptDelivery(
 }
 
 async function markDeliveryFailure(
-  deliveryId: string,
+  deliveryId: bigint,
   attempt: number,
   details: {
     responseStatus?: number;
@@ -370,7 +372,7 @@ async function markDeliveryFailure(
     meta?: Record<string, unknown>;
   }
 ): Promise<"FAILED" | "PENDING"> {
-  const meta = details.meta ?? { deliveryId, attempt };
+  const meta = details.meta ?? { deliveryId: bigintToString(deliveryId), attempt };
 
   // Tras el intento N: si N ya alcanzó 1+3 reintentos → FAILED.
   if (attempt >= WEBHOOK_MAX_ATTEMPTS) {
@@ -420,7 +422,7 @@ async function markDeliveryFailure(
   });
 
   // Reintento automático a los 10 min (hasta 3 veces).
-  scheduleInProcessRetry(deliveryId, WEBHOOK_RETRY_INTERVAL_MS);
+  scheduleInProcessRetry(bigintToString(deliveryId), WEBHOOK_RETRY_INTERVAL_MS);
   return "PENDING";
 }
 
@@ -467,12 +469,12 @@ export async function processWebhookRetries(limit = 50): Promise<{
     if (claimed.count === 0) continue;
 
     logWebhook("info", "worker reintento", {
-      deliveryId: row.id,
+      deliveryId: bigintToString(row.id),
       previousAttempt: row.attempt,
       nextAttempt: row.attempt + 1,
     });
 
-    const result = await attemptDelivery(row.id);
+    const result = await attemptDelivery(bigintToString(row.id));
     if (result === "SUCCESS") succeeded += 1;
     else if (result === "FAILED") failed += 1;
     else pending += 1;

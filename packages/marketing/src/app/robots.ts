@@ -5,19 +5,13 @@ import { absoluteUrl } from "@/lib/site";
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: [
+      { userAgent: ["Googlebot", "Bingbot", "OAI-SearchBot"], allow: "/" },
       {
-        userAgent: ["Googlebot", "Bingbot", "OAI-SearchBot"],
-        allow: "/",
-      },
-      {
-        // GPTBot es el crawler de entrenamiento; OAI-SearchBot conserva acceso.
+        // GPTBot entrena modelos; OAI-SearchBot conserva acceso a búsqueda.
         userAgent: "GPTBot",
         disallow: "/",
       },
-      {
-        userAgent: "*",
-        allow: "/",
-      },
+      { userAgent: "*", allow: "/" },
     ],
     sitemap: absoluteUrl("/sitemap.xml"),
     host: absoluteUrl("/"),

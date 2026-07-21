@@ -16,16 +16,16 @@ export const siteConfig = {
 } as const;
 
 export const resourceSlugs = [
-  "control-de-asistencia-de-empleados",
-  "registro-de-asistencia-facial",
-  "software-de-recursos-humanos-en-colombia",
-  "control-de-horarios-y-turnos",
-  "reporte-de-tardanzas-y-ausencias",
-  "geolocalizacion-para-marcacion-laboral",
-  "gestion-de-sucursales",
-  "api-de-control-de-asistencia",
-  "mcp-para-recursos-humanos",
-  "seguridad-de-datos-biometricos",
+  "control-de-tiempo-sin-vigilancia",
+  "costo-real-planilla-imperfecta",
+  "buddy-punching-como-prevenirlo",
+  "ley-2466-2025-horas-extra-colombia",
+  "geofence-marcacion-laboral",
+  "biometria-laboral-ley-1581",
+  "reportes-rrhh-que-si-sirven",
+  "roi-software-asistencia-90-dias",
+  "rrhh-ia-api-webhooks-mcp",
+  "elegir-software-asistencia-colombia",
 ] as const;
 
 export function absoluteUrl(path = "/"): string {

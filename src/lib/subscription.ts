@@ -47,7 +47,7 @@ export async function requireActiveCompanySubscription(
   return { ok: true };
 }
 
-export async function hasExpiredCompanySubscription(companyId: string): Promise<boolean> {
+export async function hasExpiredCompanySubscription(companyId: bigint): Promise<boolean> {
   const company = await prisma.company.findUnique({
     where: { id: companyId },
     select: { subscriptionExpiresAt: true },
@@ -56,7 +56,7 @@ export async function hasExpiredCompanySubscription(companyId: string): Promise<
   return isSubscriptionExpired(company?.subscriptionExpiresAt);
 }
 
-export async function getFaceQuotaStatus(companyId: string) {
+export async function getFaceQuotaStatus(companyId: bigint) {
   const company = await prisma.company.findUnique({
     where: { id: companyId },
     select: { maxEmployees: true },
@@ -77,7 +77,7 @@ export async function getFaceQuotaStatus(companyId: string) {
   };
 }
 
-export async function canRegisterAdditionalFace(companyId: string): Promise<SubscriptionGuardResult> {
+export async function canRegisterAdditionalFace(companyId: bigint): Promise<SubscriptionGuardResult> {
   const quota = await getFaceQuotaStatus(companyId);
 
   if (!quota) {
