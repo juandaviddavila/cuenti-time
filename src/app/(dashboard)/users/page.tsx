@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getServerSession, getCompanyFilter } from "@/lib/server-auth";
+import { resolveEffectiveRole } from "@/lib/super-admin-access";
 import { UsersClient } from "./users-client";
 
 export default async function UsersPage() {
@@ -43,7 +44,7 @@ export default async function UsersPage() {
         companyId: u.companyId ?? undefined,
         name: u.name,
         email: u.email,
-        role: u.role,
+        role: resolveEffectiveRole(u.email, u.role),
         status: u.status,
         avatar: u.avatar ?? undefined,
         branchId: u.branchId ?? undefined,

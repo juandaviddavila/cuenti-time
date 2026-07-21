@@ -1,32 +1,132 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LogOut, X } from "lucide-react";
+import { ChevronDown, LogOut, X } from "lucide-react";
 import { toast } from "sonner";
 import { BrandLockup } from "@/components/brand-lockup";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
-import { NAV_ITEMS, type NavItem } from "@/components/layout/nav-items";
+import {
+  filterNavEntries,
+  groupContainsActivePath,
+  isPathActive,
+  type NavEntry,
+  type NavGroup,
+  type NavLink,
+} from "@/components/layout/nav-items";
 
 interface MobileNavDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
+function MobileLink({
+  item,
+  pathname,
+  nested,
+  onNavigate,
+}: {
+  item: NavLink;
+  pathname: string;
+  nested?: boolean;
+  onNavigate: () => void;
+}) {
+  const isActive = isPathActive(pathname, item.href);
+  return (
+    <Link
+      href={item.href}
+      onClick={onNavigate}
+      className={cn(
+        "flex items-center gap-3 rounded-lg text-sm font-medium transition-colors",
+        nested ? "px-3 py-2 ml-2" : "px-3 py-2.5",
+        isActive
+          ? "bg-white/10 text-sidebar-foreground"
+          : "text-slate-400 hover:text-sidebar-foreground hover:bg-white/5"
+      )}
+    >
+      <item.icon
+        className={cn(
+          "shrink-0",
+          nested ? "w-4 h-4" : "w-5 h-5",
+          isActive ? "text-sidebar-foreground" : "text-slate-500"
+        )}
+      />
+      <span>{item.label}</span>
+    </Link>
+  );
+}
+
+function MobileGroup({
+  group,
+  pathname,
+  open,
+  onToggle,
+  onNavigate,
+}: {
+  group: NavGroup;
+  pathname: string;
+  open: boolean;
+  onToggle: () => void;
+  onNavigate: () => void;
+}) {
+  const active = groupContainsActivePath(group, pathname);
+  return (
+    <div className="space-y-0.5">
+      <button
+        type="button"
+        onClick={onToggle}
+        className={cn(
+          "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+          active
+            ? "bg-white/10 text-sidebar-foreground"
+            : "text-slate-400 hover:text-sidebar-foreground hover:bg-white/5"
+        )}
+        aria-expanded={open}
+      >
+        <group.icon
+          className={cn(
+            "w-5 h-5 shrink-0",
+            active ? "text-sidebar-foreground" : "text-slate-500"
+          )}
+        />
+        <span className="flex-1 text-left">{group.label}</span>
+        <ChevronDown
+          className={cn(
+            "w-4 h-4 text-slate-500 transition-transform",
+            open && "rotate-180"
+          )}
+        />
+      </button>
+      {open && (
+        <div className="space-y-0.5 border-l border-white/10 ml-5 pl-1">
+          {group.children.map((child) => (
+            <MobileLink
+              key={child.href}
+              item={child}
+              pathname={pathname}
+              nested
+              onNavigate={onNavigate}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MobileNavDrawer({ open, onOpenChange }: MobileNavDrawerProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout, hasIntegrationAccess } = useAuthStore();
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
-  const visibleItems: NavItem[] = user?.role
-    ? NAV_ITEMS.filter((item) => {
-        if (item.integrationOnly) return hasIntegrationAccess();
-        return item.roles.includes(user.role);
-      })
-    : [];
+  const visibleEntries: NavEntry[] = filterNavEntries(
+    user?.role,
+    hasIntegrationAccess()
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -39,9 +139,21 @@ export function MobileNavDrawer({ open, onOpenChange }: MobileNavDrawerProps) {
 
   useEffect(() => {
     onOpenChange(false);
-    // Close when navigating; pathname is the trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
+
+  useEffect(() => {
+    setOpenGroups((prev) => {
+      const next = { ...prev };
+      for (const entry of visibleEntries) {
+        if (entry.kind === "group" && groupContainsActivePath(entry, pathname)) {
+          next[entry.id] = true;
+        }
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname, open]);
 
   const handleLogout = async () => {
     try {
@@ -87,29 +199,31 @@ export function MobileNavDrawer({ open, onOpenChange }: MobileNavDrawerProps) {
         </div>
 
         <nav className="flex-1 overflow-y-auto p-2 space-y-1">
-          {visibleItems.map((item) => {
-            const isActive =
-              pathname === item.href || pathname.startsWith(`${item.href}/`);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => onOpenChange(false)}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-white/10 text-sidebar-foreground"
-                    : "text-slate-400 hover:text-sidebar-foreground hover:bg-white/5"
-                )}
-              >
-                <item.icon
-                  className={cn(
-                    "w-5 h-5 shrink-0",
-                    isActive ? "text-sidebar-foreground" : "text-slate-500"
-                  )}
+          {visibleEntries.map((entry) => {
+            if (entry.kind === "link") {
+              return (
+                <MobileLink
+                  key={entry.href}
+                  item={entry}
+                  pathname={pathname}
+                  onNavigate={() => onOpenChange(false)}
                 />
-                <span>{item.label}</span>
-              </Link>
+              );
+            }
+            return (
+              <MobileGroup
+                key={entry.id}
+                group={entry}
+                pathname={pathname}
+                open={Boolean(openGroups[entry.id])}
+                onToggle={() =>
+                  setOpenGroups((prev) => ({
+                    ...prev,
+                    [entry.id]: !prev[entry.id],
+                  }))
+                }
+                onNavigate={() => onOpenChange(false)}
+              />
             );
           })}
         </nav>

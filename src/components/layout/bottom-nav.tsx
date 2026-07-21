@@ -11,9 +11,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+/** Atajos fijos: el menú completo (con grupos) está en el drawer. */
 const MOBILE_NAV = [
   { label: "Inicio", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Empleados", href: "/employees", icon: Users },
+  { label: "Personas", href: "/employees", icon: Users },
   { label: "Facial", href: "/facial-registration", icon: ScanFace },
   { label: "Asistencia", href: "/attendance", icon: Clock },
   { label: "Informes", href: "/reports", icon: BarChart3 },

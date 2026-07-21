@@ -66,6 +66,7 @@ export async function GET() {
   return NextResponse.json({
     user: {
       ...user,
+      role: session.role,
       companyId: activeCompanyId ?? user.companyId,
       companyName,
       createdAt: user.createdAt.toISOString(),

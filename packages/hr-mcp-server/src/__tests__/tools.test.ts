@@ -10,12 +10,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const toolsFile = readFileSync(join(__dirname, "../tools.ts"), "utf-8");
 
 describe("tool registry", () => {
-  it("exposes exactly 11 tools", () => {
+  it("exposes exactly 14 tools", () => {
     const tools = listToolDefinitions();
-    expect(tools).toHaveLength(11);
+    expect(tools).toHaveLength(14);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([
+      "find_employee",
       "get_absences",
+      "get_attendance_records",
       "get_branch_summary",
       "get_company_info",
       "get_daily_snapshot",
@@ -24,6 +26,7 @@ describe("tool registry", () => {
       "get_incidents",
       "get_late_arrivals",
       "get_open_days",
+      "get_present_now",
       "list_branches",
       "list_employees",
     ]);
@@ -80,6 +83,110 @@ describe("entity tools", () => {
     const data = JSON.parse(result.content[0].text);
     expect(data.total).toBe(0);
     expect(data.data).toEqual([]);
+  });
+});
+
+describe("attendance detail tools", () => {
+  let testToken: TestToken;
+  let branchId: string;
+  let employeeId: string;
+
+  beforeAll(async () => {
+    testToken = await createTestToken();
+    const branch = await prisma.branch.create({
+      data: {
+        companyId: testToken.companyId,
+        name: "MCP Main Branch",
+        code: "MCP-MAIN",
+      },
+    });
+    branchId = branch.id;
+    const employee = await prisma.employee.create({
+      data: {
+        companyId: testToken.companyId,
+        branchId,
+        fullName: "Ana Prueba MCP",
+        documentNumber: `mcp-employee-${Date.now()}`,
+        email: "ana.mcp@example.com",
+        internalCode: "EMP-MCP-01",
+      },
+    });
+    employeeId = employee.id;
+    await prisma.attendanceRecord.create({
+      data: {
+        companyId: testToken.companyId,
+        branchId,
+        employeeId,
+        type: "CHECK_IN",
+        recordedAt: new Date(2026, 6, 20, 8, 0, 0),
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.attendanceRecord.deleteMany({ where: { employeeId } });
+    await prisma.employee.deleteMany({ where: { id: employeeId } });
+    await prisma.branch.deleteMany({ where: { id: branchId } });
+    await cleanupTestToken();
+  });
+
+  it("find_employee resolves an employee by partial name", async () => {
+    const tool = getTool("find_employee");
+    const result = await tool!.execute(
+      { query: "Ana Prueba" },
+      {
+        token: {
+          tokenId: testToken.tokenId,
+          companyId: testToken.companyId,
+          scopes: ["read"],
+        },
+        companyId: testToken.companyId,
+      }
+    );
+    const data = JSON.parse(result.content[0].text);
+    expect(data.count).toBe(1);
+    expect(data.data[0].id).toBe(employeeId);
+  });
+
+  it("get_attendance_records returns raw tenant records", async () => {
+    const tool = getTool("get_attendance_records");
+    const result = await tool!.execute(
+      {
+        from: "2026-07-20",
+        to: "2026-07-20",
+        employeeId,
+      },
+      {
+        token: {
+          tokenId: testToken.tokenId,
+          companyId: testToken.companyId,
+          scopes: ["read"],
+        },
+        companyId: testToken.companyId,
+      }
+    );
+    const data = JSON.parse(result.content[0].text);
+    expect(data.total).toBe(1);
+    expect(data.data[0].type).toBe("CHECK_IN");
+    expect(data.data[0].employee.id).toBe(employeeId);
+  });
+
+  it("get_present_now returns employees whose last mark is CHECK_IN", async () => {
+    const tool = getTool("get_present_now");
+    const result = await tool!.execute(
+      { date: "2026-07-20", branchId },
+      {
+        token: {
+          tokenId: testToken.tokenId,
+          companyId: testToken.companyId,
+          scopes: ["read"],
+        },
+        companyId: testToken.companyId,
+      }
+    );
+    const data = JSON.parse(result.content[0].text);
+    expect(data.count).toBe(1);
+    expect(data.data[0].employee.id).toBe(employeeId);
   });
 });
 

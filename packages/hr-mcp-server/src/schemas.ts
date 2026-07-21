@@ -39,11 +39,35 @@ export const getIncidentsSchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+export const getAttendanceRecordsSchema = z.object({
+  from: isoDateSchema,
+  to: isoDateSchema,
+  employeeId: cuidSchema.optional(),
+  branchId: cuidSchema.optional(),
+  type: z.enum(["CHECK_IN", "CHECK_OUT"]).optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+export const findEmployeeSchema = z.object({
+  query: z.string().trim().min(2).max(120),
+  status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+});
+
+export const getPresentNowSchema = z.object({
+  date: isoDateSchema.optional(),
+  branchId: cuidSchema.optional(),
+});
+
 export type HrReportToolInput = z.infer<typeof hrReportToolSchema>;
 export type ListEmployeesInput = z.infer<typeof listEmployeesSchema>;
 export type ListBranchesInput = z.infer<typeof listBranchesSchema>;
 export type GetCompanyInfoInput = z.infer<typeof getCompanyInfoSchema>;
 export type GetIncidentsInput = z.infer<typeof getIncidentsSchema>;
+export type GetAttendanceRecordsInput = z.infer<typeof getAttendanceRecordsSchema>;
+export type FindEmployeeInput = z.infer<typeof findEmployeeSchema>;
+export type GetPresentNowInput = z.infer<typeof getPresentNowSchema>;
 
 export function validateDateRange(from: string, to: string): void {
   const fromDate = new Date(from);

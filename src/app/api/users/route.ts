@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { requireSession, getCompanyFilter } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { resolveEffectiveRole } from "@/lib/super-admin-access";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -94,7 +95,10 @@ export async function GET(request: NextRequest) {
     ]);
 
     return NextResponse.json({
-      data: users,
+      data: users.map((user) => ({
+        ...user,
+        role: resolveEffectiveRole(user.email, user.role),
+      })),
       pagination: {
         page,
         pageSize,
@@ -139,16 +143,17 @@ export async function POST(request: NextRequest) {
 
   const { password, companyId, role, ...rest } = parsed.data;
 
-  // COMPANY_ADMIN can only create users for their own company and cannot assign SAAS_SUPER_ADMIN role
+  if (role === "SAAS_SUPER_ADMIN") {
+    return NextResponse.json(
+      { error: "El acceso de super admin se configura en SUPER_ADMIN_EMAILS" },
+      { status: 422 }
+    );
+  }
+
+  // COMPANY_ADMIN can only create users for their own company
   if (session.role === "COMPANY_ADMIN") {
     if (companyId && companyId !== session.companyId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (role === "SAAS_SUPER_ADMIN") {
-      return NextResponse.json(
-        { error: "No tienes permiso para asignar ese rol" },
-        { status: 403 }
-      );
     }
   }
 
@@ -190,7 +195,10 @@ export async function POST(request: NextRequest) {
       companyId: user.companyId,
       newValues: { name: user.name, email: user.email, role: user.role, status: user.status },
     });
-    return NextResponse.json(user, { status: 201 });
+    return NextResponse.json(
+      { ...user, role: resolveEffectiveRole(user.email, user.role) },
+      { status: 201 }
+    );
   } catch (err) {
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&

@@ -25,14 +25,17 @@ describe("MCP server integration", () => {
     await cleanupTestToken();
   });
 
-  it("lists exactly 11 tools", async () => {
+  it("lists exactly 14 tools", async () => {
     expect(client).not.toBeNull();
     const tools = await client!.listTools();
-    expect(tools.tools).toHaveLength(11);
+    expect(tools.tools).toHaveLength(14);
     const names = tools.tools.map((t) => t.name);
     expect(names).toContain("get_late_arrivals");
     expect(names).toContain("get_company_info");
     expect(names).toContain("list_employees");
+    expect(names).toContain("get_attendance_records");
+    expect(names).toContain("find_employee");
+    expect(names).toContain("get_present_now");
   });
 
   it("calls get_company_info and returns company data", async () => {

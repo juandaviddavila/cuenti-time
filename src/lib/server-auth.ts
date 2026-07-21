@@ -12,9 +12,10 @@ import {
   type UserPermissionFields,
 } from "@/lib/user-permissions";
 import { extractTokenPayload, payloadToSession } from "@/lib/session-tokens";
+import { getCompanyFilter, type TenantSession } from "@/lib/tenant";
 import type { UserRole } from "@/types/user";
 
-export interface ServerSession {
+export interface ServerSession extends TenantSession {
   userId: string;
   companyId: string | null;
   role: UserRole;
@@ -23,6 +24,8 @@ export interface ServerSession {
   impersonatorUserId?: string | null;
   isImpersonating: boolean;
 }
+
+export { getCompanyFilter };
 
 /**
  * Returns the authenticated session from the httpOnly cookie.
@@ -72,19 +75,6 @@ export async function requireSession(): Promise<ServerSession> {
 }
 
 /**
- * Returns the companyId filter for Prisma queries based on role.
- * SAAS_SUPER_ADMIN sees all; everyone else is scoped to their single company.
- *
- * Business rule: one user account belongs to exactly one company.
- * Use `{ id: session.companyId }` when querying the Company model itself.
- */
-export function getCompanyFilter(session: ServerSession): { companyId?: string } {
-  if (session.role === "SAAS_SUPER_ADMIN") return {};
-  if (!session.companyId) return { companyId: "__none__" }; // no data returned
-  return { companyId: session.companyId };
-}
-
-/**
  * Resolves and validates the JWT secret at runtime.
  * Throws at startup if the env var is missing — never silently use a fallback.
  */
@@ -127,13 +117,17 @@ export async function requireIntegrationAccess(
   session: ServerSession
 ): Promise<UserPermissionFields> {
   const permissions = await getUserPermissionFields(session.userId);
-  if (!permissions || !canManageIntegrations(permissions)) {
+  const effectivePermissions = permissions
+    ? { ...permissions, role: session.role }
+    : null;
+
+  if (!effectivePermissions || !canManageIntegrations(effectivePermissions)) {
     throw new Response(JSON.stringify({ error: "Forbidden" }), {
       status: 403,
       headers: { "Content-Type": "application/json" },
     });
   }
-  return permissions;
+  return effectivePermissions;
 }
 
 export async function userBypassesGeofence(userId: string): Promise<boolean> {

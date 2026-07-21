@@ -1,0 +1,146 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --ink: #171714;
+  --muted: #68665f;
+  --paper: #f6f3eb;
+  --cream: #fffdf7;
+  --sun: #f9c626;
+  --line: rgba(23, 23, 20, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--cream);
+  color: var(--ink);
+  font-family: Arial, Helvetica, sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--sun);
+  color: var(--ink);
+}
+
+a,
+button,
+input {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.page-shell {
+  width: min(1180px, calc(100% - 32px));
+  margin-inline: auto;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #5c5438;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.eyebrow::before {
+  width: 1.6rem;
+  height: 2px;
+  background: var(--sun);
+  content: "";
+}
+
+.display-title {
+  font-size: clamp(2.6rem, 7vw, 6.7rem);
+  font-weight: 800;
+  letter-spacing: -0.075em;
+  line-height: 0.94;
+}
+
+.section-title {
+  font-size: clamp(2rem, 4.5vw, 4rem);
+  font-weight: 800;
+  letter-spacing: -0.055em;
+  line-height: 1;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+.sun-grid {
+  background-color: var(--sun);
+  background-image:
+    linear-gradient(rgba(23, 23, 20, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23, 23, 20, 0.08) 1px, transparent 1px);
+  background-size: 42px 42px;
+}
+
+.fine-grid {
+  background-image:
+    linear-gradient(rgba(23, 23, 20, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23, 23, 20, 0.045) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.dot-field {
+  background-image: radial-gradient(rgba(23, 23, 20, 0.2) 0.8px, transparent 0.8px);
+  background-size: 14px 14px;
+}
+
+.hero-orbit {
+  animation: orbit 18s linear infinite;
+}
+
+.float-soft {
+  animation: float-soft 5s ease-in-out infinite;
+}
+
+.range-sun {
+  accent-color: var(--sun);
+}
+
+@keyframes orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .hero-orbit,
+  .float-soft {
+    animation: none;
+  }
+}
+
+@media (min-width: 768px) {
+  .page-shell {
+    width: min(1180px, calc(100% - 64px));
+  }
+}

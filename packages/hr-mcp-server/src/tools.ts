@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { endOfDay, startOfDay } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { loadHrEvaluations } from "@/lib/hr/load-hr-evaluations";
 import { parseLocalDateParam } from "@/lib/hr/local-date";
 import type { UserRole } from "@/types/user";
-import type { ServerSession } from "@/lib/server-auth";
+import type { TenantSession } from "@/lib/tenant";
 import type { ApiTokenContext } from "@/lib/api-token-auth";
 import type { ToolHandler } from "./types.js";
 import {
@@ -12,30 +13,40 @@ import {
   listBranchesSchema,
   getCompanyInfoSchema,
   getIncidentsSchema,
+  getAttendanceRecordsSchema,
+  findEmployeeSchema,
+  getPresentNowSchema,
   validateDateRange,
   type HrReportToolInput,
   type ListEmployeesInput,
   type ListBranchesInput,
   type GetCompanyInfoInput,
   type GetIncidentsInput,
+  type GetAttendanceRecordsInput,
+  type FindEmployeeInput,
+  type GetPresentNowInput,
 } from "./schemas.js";
 import { invalidParams, notFound } from "./errors.js";
 
 const MCP_ROLE: UserRole = "DEVELOPER";
 
-function tokenContextToSession(token: ApiTokenContext): ServerSession {
+function tokenContextToSession(token: ApiTokenContext): TenantSession {
   return {
     userId: token.tokenId,
     companyId: token.companyId,
     role: MCP_ROLE,
-    email: "mcp@cuenti.co",
-    name: "MCP Integration",
-    isImpersonating: false,
   };
 }
 
 function safeJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+/** JSON Schema compatible with ChatGPT/OpenAI MCP (sin $schema 2020-12; defaults no van en required). */
+function toolJsonSchema(schema: z.ZodType): object {
+  const json = z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>;
+  delete json.$schema;
+  return json;
 }
 
 function parseArgs<T>(schema: z.ZodType<T>, args: unknown): T {
@@ -103,7 +114,7 @@ async function runHrReport(
 const getLateArrivals: ToolHandler = {
   name: "get_late_arrivals",
   description: "Tardanzas del período con minutos de atraso por empleado y día.",
-  inputSchema: z.toJSONSchema(hrReportToolSchema),
+  inputSchema: toolJsonSchema(hrReportToolSchema),
   execute: async (args, ctx) => {
     const input = parseArgs(hrReportToolSchema, args);
     const result = await runHrReport(ctx.token, input, "lates");
@@ -125,7 +136,7 @@ const getLateArrivals: ToolHandler = {
 const getAbsences: ToolHandler = {
   name: "get_absences",
   description: "Días laborales sin entrada (ausencias), con opción de ver justificadas.",
-  inputSchema: z.toJSONSchema(hrReportToolSchema),
+  inputSchema: toolJsonSchema(hrReportToolSchema),
   execute: async (args, ctx) => {
     const input = parseArgs(hrReportToolSchema, args);
     const result = await runHrReport(ctx.token, input, "absences");
@@ -147,7 +158,7 @@ const getAbsences: ToolHandler = {
 const getEarlyLeaves: ToolHandler = {
   name: "get_early_leaves",
   description: "Salidas anticipadas antes del fin de turno con minutos.",
-  inputSchema: z.toJSONSchema(hrReportToolSchema),
+  inputSchema: toolJsonSchema(hrReportToolSchema),
   execute: async (args, ctx) => {
     const input = parseArgs(hrReportToolSchema, args);
     const result = await runHrReport(ctx.token, input, "early_leaves");
@@ -169,7 +180,7 @@ const getEarlyLeaves: ToolHandler = {
 const getOpenDays: ToolHandler = {
   name: "get_open_days",
   description: "Días laborales con CHECK_IN pero sin CHECK_OUT.",
-  inputSchema: z.toJSONSchema(hrReportToolSchema),
+  inputSchema: toolJsonSchema(hrReportToolSchema),
   execute: async (args, ctx) => {
     const input = parseArgs(hrReportToolSchema, args);
     const result = await runHrReport(ctx.token, input, "open_days");
@@ -191,7 +202,7 @@ const getOpenDays: ToolHandler = {
 const getEmployeeSummary: ToolHandler = {
   name: "get_employee_summary",
   description: "KPIs agregados por empleado: puntualidad, ausencias, tardanzas, minutos.",
-  inputSchema: z.toJSONSchema(hrReportToolSchema),
+  inputSchema: toolJsonSchema(hrReportToolSchema),
   execute: async (args, ctx) => {
     const input = parseArgs(hrReportToolSchema, args);
     const result = await runHrReport(ctx.token, input, "employee_summary");
@@ -213,7 +224,7 @@ const getEmployeeSummary: ToolHandler = {
 const getBranchSummary: ToolHandler = {
   name: "get_branch_summary",
   description: "KPIs agregados por sucursal.",
-  inputSchema: z.toJSONSchema(hrReportToolSchema),
+  inputSchema: toolJsonSchema(hrReportToolSchema),
   execute: async (args, ctx) => {
     const input = parseArgs(hrReportToolSchema, args);
     const result = await runHrReport(ctx.token, input, "branch_summary");
@@ -235,7 +246,7 @@ const getBranchSummary: ToolHandler = {
 const getDailySnapshot: ToolHandler = {
   name: "get_daily_snapshot",
   description: "Snapshot diario operativo: presentes, tardanzas, ausencias y sin salida.",
-  inputSchema: z.toJSONSchema(hrReportToolSchema),
+  inputSchema: toolJsonSchema(hrReportToolSchema),
   execute: async (args, ctx) => {
     const input = parseArgs(hrReportToolSchema, args);
     const result = await runHrReport(ctx.token, input, "daily");
@@ -286,10 +297,213 @@ const getDailySnapshot: ToolHandler = {
   },
 };
 
+const getAttendanceRecords: ToolHandler = {
+  name: "get_attendance_records",
+  description:
+    "Detalle de marcaciones CHECK_IN/CHECK_OUT del período. Úsala para consultar horas exactas de entrada/salida, sucursal, validación y geolocalización.",
+  inputSchema: toolJsonSchema(getAttendanceRecordsSchema),
+  execute: async (args, ctx) => {
+    const input = parseArgs<GetAttendanceRecordsInput>(
+      getAttendanceRecordsSchema,
+      args
+    );
+    validateDateRange(input.from, input.to);
+    if (input.branchId) await validateBranchId(input.branchId, ctx.companyId);
+    if (input.employeeId) await validateEmployeeId(input.employeeId, ctx.companyId);
+
+    const where = {
+      companyId: ctx.companyId,
+      recordedAt: {
+        gte: startOfDay(parseLocalDateParam(input.from)),
+        lte: endOfDay(parseLocalDateParam(input.to)),
+      },
+      ...(input.employeeId ? { employeeId: input.employeeId } : {}),
+      ...(input.branchId ? { branchId: input.branchId } : {}),
+      ...(input.type ? { type: input.type } : {}),
+    };
+
+    const [records, total] = await Promise.all([
+      prisma.attendanceRecord.findMany({
+        where,
+        select: {
+          id: true,
+          type: true,
+          recordedAt: true,
+          validationStatus: true,
+          confidenceScore: true,
+          livenessScore: true,
+          deviceInfo: true,
+          ipAddress: true,
+          latitude: true,
+          longitude: true,
+          distanceFromBranch: true,
+          isManual: true,
+          notes: true,
+          employee: {
+            select: {
+              id: true,
+              fullName: true,
+              documentNumber: true,
+            },
+          },
+          branch: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+            },
+          },
+        },
+        orderBy: { recordedAt: "desc" },
+        take: input.limit,
+        skip: input.offset,
+      }),
+      prisma.attendanceRecord.count({ where }),
+    ]);
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: safeJson({
+            range: { from: input.from, to: input.to },
+            total,
+            count: records.length,
+            data: records,
+          }),
+        },
+      ],
+    };
+  },
+};
+
+const findEmployee: ToolHandler = {
+  name: "find_employee",
+  description:
+    "Busca empleados por nombre, documento, código interno o email. Úsala para resolver el employeeId antes de consultar reportes o marcaciones.",
+  inputSchema: toolJsonSchema(findEmployeeSchema),
+  execute: async (args, ctx) => {
+    const input = parseArgs<FindEmployeeInput>(findEmployeeSchema, args);
+    const employees = await prisma.employee.findMany({
+      where: {
+        companyId: ctx.companyId,
+        ...(input.status ? { status: input.status } : {}),
+        OR: [
+          { fullName: { contains: input.query, mode: "insensitive" } },
+          { documentNumber: { contains: input.query, mode: "insensitive" } },
+          { internalCode: { contains: input.query, mode: "insensitive" } },
+          { email: { contains: input.query, mode: "insensitive" } },
+        ],
+      },
+      select: {
+        id: true,
+        fullName: true,
+        documentType: true,
+        documentNumber: true,
+        internalCode: true,
+        email: true,
+        phone: true,
+        status: true,
+        faceRegistered: true,
+        branch: { select: { id: true, name: true, code: true } },
+        position: { select: { id: true, name: true } },
+      },
+      orderBy: { fullName: "asc" },
+      take: input.limit,
+    });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: safeJson({
+            query: input.query,
+            count: employees.length,
+            data: employees,
+          }),
+        },
+      ],
+    };
+  },
+};
+
+const getPresentNow: ToolHandler = {
+  name: "get_present_now",
+  description:
+    "Lista quiénes están presentes: empleados cuya última marcación del día es CHECK_IN. Permite filtrar por fecha y sucursal.",
+  inputSchema: toolJsonSchema(getPresentNowSchema),
+  execute: async (args, ctx) => {
+    const input = parseArgs<GetPresentNowInput>(getPresentNowSchema, args);
+    if (input.branchId) await validateBranchId(input.branchId, ctx.companyId);
+
+    const selectedDate = input.date
+      ? parseLocalDateParam(input.date)
+      : new Date();
+    const records = await prisma.attendanceRecord.findMany({
+      where: {
+        companyId: ctx.companyId,
+        recordedAt: {
+          gte: startOfDay(selectedDate),
+          lte: endOfDay(selectedDate),
+        },
+        ...(input.branchId ? { branchId: input.branchId } : {}),
+      },
+      select: {
+        employeeId: true,
+        type: true,
+        recordedAt: true,
+        employee: {
+          select: {
+            id: true,
+            fullName: true,
+            documentNumber: true,
+            status: true,
+            position: { select: { id: true, name: true } },
+          },
+        },
+        branch: { select: { id: true, name: true, code: true } },
+      },
+      orderBy: { recordedAt: "asc" },
+    });
+
+    const lastRecordByEmployee = new Map<string, (typeof records)[number]>();
+    for (const record of records) {
+      lastRecordByEmployee.set(record.employeeId, record);
+    }
+    const present = Array.from(lastRecordByEmployee.values())
+      .filter((record) => record.type === "CHECK_IN")
+      .sort((a, b) => a.employee.fullName.localeCompare(b.employee.fullName));
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: safeJson({
+            date:
+              input.date ??
+              `${selectedDate.getFullYear()}-${String(
+                selectedDate.getMonth() + 1
+              ).padStart(2, "0")}-${String(selectedDate.getDate()).padStart(
+                2,
+                "0"
+              )}`,
+            count: present.length,
+            data: present.map((record) => ({
+              employee: record.employee,
+              branch: record.branch,
+              checkedInAt: record.recordedAt,
+            })),
+          }),
+        },
+      ],
+    };
+  },
+};
+
 const listEmployees: ToolHandler = {
   name: "list_employees",
   description: "Lista empleados del tenant. Filtra por estado y sucursal.",
-  inputSchema: z.toJSONSchema(listEmployeesSchema),
+  inputSchema: toolJsonSchema(listEmployeesSchema),
   execute: async (args, ctx) => {
     const input = parseArgs(listEmployeesSchema, args);
     if (input.branchId) await validateBranchId(input.branchId, ctx.companyId);
@@ -340,7 +554,7 @@ const listEmployees: ToolHandler = {
 const listBranches: ToolHandler = {
   name: "list_branches",
   description: "Lista sucursales del tenant.",
-  inputSchema: z.toJSONSchema(listBranchesSchema),
+  inputSchema: toolJsonSchema(listBranchesSchema),
   execute: async (args, ctx) => {
     const input = parseArgs(listBranchesSchema, args);
     const [branches, total] = await Promise.all([
@@ -385,7 +599,7 @@ const listBranches: ToolHandler = {
 const getCompanyInfo: ToolHandler = {
   name: "get_company_info",
   description: "Información de la empresa del token: tolerancias, suscripción, límites.",
-  inputSchema: z.toJSONSchema(getCompanyInfoSchema),
+  inputSchema: toolJsonSchema(getCompanyInfoSchema),
   execute: async (_args, ctx) => {
     const company = await prisma.company.findUnique({
       where: { id: ctx.companyId },
@@ -420,7 +634,7 @@ const getCompanyInfo: ToolHandler = {
 const getIncidents: ToolHandler = {
   name: "get_incidents",
   description: "Lista novedades/incidentes del tenant con filtros opcionales.",
-  inputSchema: z.toJSONSchema(getIncidentsSchema),
+  inputSchema: toolJsonSchema(getIncidentsSchema),
   execute: async (args, ctx) => {
     const input = parseArgs(getIncidentsSchema, args);
     if (input.from && input.to) validateDateRange(input.from, input.to);
@@ -494,6 +708,9 @@ export const TOOL_REGISTRY: Map<string, ToolHandler> = new Map(
     getEmployeeSummary,
     getBranchSummary,
     getDailySnapshot,
+    getAttendanceRecords,
+    findEmployee,
+    getPresentNow,
     getIncidents,
     listEmployees,
     listBranches,

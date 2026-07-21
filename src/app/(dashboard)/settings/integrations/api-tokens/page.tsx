@@ -1,7 +1,8 @@
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getServerSession, getUserPermissionFields } from "@/lib/server-auth";
 import { canManageIntegrations } from "@/lib/user-permissions";
+import { getInternalAppOrigin } from "@/lib/internal-origin";
 import ApiTokensClient, { type ApiToken } from "../../api-tokens/api-tokens-client";
 import { IntegrationsNav } from "../integrations-nav";
 import { PageHeader } from "@/components/shared/page-header";
@@ -16,11 +17,6 @@ export default async function IntegrationsApiTokensPage() {
   }
 
   const cookieStore = await cookies();
-  const headersList = await headers();
-  const host = headersList.get("host") ?? "localhost:7578";
-  const protocol =
-    headersList.get("x-forwarded-proto") ??
-    (process.env.NODE_ENV === "production" ? "https" : "http");
   const cookieHeader = cookieStore
     .getAll()
     .map((c) => `${c.name}=${encodeURIComponent(c.value)}`)
@@ -30,7 +26,7 @@ export default async function IntegrationsApiTokensPage() {
   let error: string | null = null;
 
   try {
-    const res = await fetch(`${protocol}://${host}/api/api-tokens`, {
+    const res = await fetch(`${getInternalAppOrigin()}/api/api-tokens`, {
       headers: { cookie: cookieHeader },
       cache: "no-store",
     });
@@ -49,7 +45,7 @@ export default async function IntegrationsApiTokensPage() {
     <div className="space-y-2">
       <PageHeader
         title="Integraciones"
-        description="Configura tokens de API y webhooks para conectar sistemas externos."
+        description="Tokens API, MCP de RRHH y webhooks para conectar sistemas externos."
       />
       <IntegrationsNav />
       {error ? (

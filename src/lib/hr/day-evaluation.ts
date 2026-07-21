@@ -176,11 +176,28 @@ function resolveNoveltiesForDay(
   };
 }
 
+function buildRecordsByDay(
+  records: AttendanceMark[]
+): Map<string, AttendanceMark[]> {
+  const map = new Map<string, AttendanceMark[]>();
+  for (const r of records) {
+    const key = `${r.employeeId}:${localDateKey(r.recordedAt)}`;
+    const list = map.get(key);
+    if (list) {
+      list.push(r);
+    } else {
+      map.set(key, [r]);
+    }
+  }
+  return map;
+}
+
 export function evaluateEmployeeDay(params: {
   employee: EmployeeDayContext;
   day: Date;
   assignments: EmployeeShiftAssignment[];
-  records: AttendanceMark[];
+  records?: AttendanceMark[];
+  recordsByDay?: Map<string, AttendanceMark[]>;
   novelties: NoveltyInput[];
   toleranceMinutes: number;
   earlyLeaveToleranceMinutes?: number;
@@ -190,15 +207,13 @@ export function evaluateEmployeeDay(params: {
     day,
     assignments,
     records,
+    recordsByDay,
     novelties,
     toleranceMinutes,
     earlyLeaveToleranceMinutes = 0,
   } = params;
 
-  const dayStart = new Date(day);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(day);
-  dayEnd.setHours(23, 59, 59, 999);
+  const dayKey = localDateKey(day);
 
   const assignment = pickActiveShiftForDate(assignments, employee.id, day);
   const shift = assignment?.shift ?? null;
@@ -219,12 +234,13 @@ export function evaluateEmployeeDay(params: {
   if (resolved?.overrideEnd) scheduledEnd = resolved.overrideEnd;
 
   const isWorkDay = Boolean(scheduledStart);
-  const dayRecords = records.filter(
-    (r) =>
-      r.employeeId === employee.id &&
-      r.recordedAt >= dayStart &&
-      r.recordedAt <= dayEnd
-  );
+  const dayRecords = recordsByDay
+    ? (recordsByDay.get(`${employee.id}:${dayKey}`) ?? [])
+    : records?.filter(
+        (r) =>
+          r.employeeId === employee.id &&
+          localDateKey(r.recordedAt) === dayKey
+      ) ?? [];
   const checkInRec = dayRecords.find((r) => r.type === "CHECK_IN");
   const checkOutRec = [...dayRecords]
     .reverse()
@@ -345,6 +361,7 @@ export function evaluatePeriod(params: {
   } = params;
 
   const rows: DayEvaluation[] = [];
+  const recordsByDay = buildRecordsByDay(records);
   for (const employee of employees) {
     const tolerance =
       toleranceByCompany.get(employee.companyId) ?? defaultTolerance;
@@ -357,7 +374,7 @@ export function evaluatePeriod(params: {
           employee,
           day,
           assignments,
-          records,
+          recordsByDay,
           novelties,
           toleranceMinutes: tolerance,
           earlyLeaveToleranceMinutes: earlyTolerance,

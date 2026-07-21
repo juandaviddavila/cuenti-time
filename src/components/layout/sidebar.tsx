@@ -1,35 +1,172 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
 } from "lucide-react";
+import { toast } from "sonner";
 import { APP_NAME, BRAND } from "@/lib/brand";
 import { BrandLockup } from "@/components/brand-lockup";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { Button } from "@/components/ui/button";
-import { useState } from "react";
-import { toast } from "sonner";
-import { useRouter } from "next/navigation";
-import { NAV_ITEMS, type NavItem } from "@/components/layout/nav-items";
+import {
+  filterNavEntries,
+  groupContainsActivePath,
+  isNavGroup,
+  isPathActive,
+  type NavEntry,
+  type NavGroup,
+  type NavLink,
+} from "@/components/layout/nav-items";
+
+function NavLinkRow({
+  item,
+  pathname,
+  collapsed,
+  nested = false,
+}: {
+  item: NavLink;
+  pathname: string;
+  collapsed: boolean;
+  nested?: boolean;
+}) {
+  const isActive = isPathActive(pathname, item.href);
+  return (
+    <Link
+      href={item.href}
+      className={cn(
+        "flex items-center gap-3 rounded-lg text-sm font-medium transition-all duration-150 group",
+        nested ? "px-3 py-2 ml-2" : "px-3 py-2.5",
+        collapsed ? "justify-center" : "",
+        isActive
+          ? "bg-white/10 text-sidebar-foreground"
+          : "text-slate-400 hover:text-sidebar-foreground hover:bg-white/5"
+      )}
+      title={collapsed ? item.label : undefined}
+    >
+      <item.icon
+        className={cn(
+          "shrink-0",
+          nested ? "w-4 h-4" : "w-5 h-5",
+          isActive
+            ? "text-sidebar-foreground"
+            : "text-slate-500 group-hover:text-sidebar-foreground"
+        )}
+      />
+      {!collapsed && <span>{item.label}</span>}
+    </Link>
+  );
+}
+
+function NavGroupBlock({
+  group,
+  pathname,
+  collapsed,
+  open,
+  onToggle,
+}: {
+  group: NavGroup;
+  pathname: string;
+  collapsed: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const childActive = groupContainsActivePath(group, pathname);
+  const groupActive = Boolean(group.href && isPathActive(pathname, group.href)) || childActive;
+
+  if (collapsed) {
+    const target = group.href ?? group.children[0]?.href ?? "#";
+    return (
+      <Link
+        href={target}
+        className={cn(
+          "flex items-center justify-center px-3 py-2.5 rounded-lg transition-all",
+          groupActive
+            ? "bg-white/10 text-sidebar-foreground"
+            : "text-slate-400 hover:text-sidebar-foreground hover:bg-white/5"
+        )}
+        title={group.label}
+      >
+        <group.icon className="w-5 h-5 shrink-0" />
+      </Link>
+    );
+  }
+
+  return (
+    <div className="space-y-0.5">
+      <button
+        type="button"
+        onClick={onToggle}
+        className={cn(
+          "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all",
+          groupActive
+            ? "bg-white/10 text-sidebar-foreground"
+            : "text-slate-400 hover:text-sidebar-foreground hover:bg-white/5"
+        )}
+        aria-expanded={open}
+      >
+        <group.icon
+          className={cn(
+            "w-5 h-5 shrink-0",
+            groupActive ? "text-sidebar-foreground" : "text-slate-500"
+          )}
+        />
+        <span className="flex-1 text-left">{group.label}</span>
+        <ChevronDown
+          className={cn(
+            "w-4 h-4 text-slate-500 transition-transform",
+            open && "rotate-180"
+          )}
+        />
+      </button>
+      {open && (
+        <div className="space-y-0.5 border-l border-white/10 ml-5 pl-1">
+          {group.children.map((child) => (
+            <NavLinkRow
+              key={child.href}
+              item={child}
+              pathname={pathname}
+              collapsed={false}
+              nested
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Sidebar() {
   const pathname = usePathname();
   const { user, logout, hasIntegrationAccess } = useAuthStore();
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
-  // Only show nav items when role is known to prevent hydration flash.
-  const visibleItems: NavItem[] = user?.role
-    ? NAV_ITEMS.filter((item) => {
-        if (item.integrationOnly) return hasIntegrationAccess();
-        return item.roles.includes(user.role);
-      })
-    : [];
+  const visibleEntries: NavEntry[] = filterNavEntries(
+    user?.role,
+    hasIntegrationAccess()
+  );
+
+  useEffect(() => {
+    setOpenGroups((prev) => {
+      const next = { ...prev };
+      for (const entry of visibleEntries) {
+        if (isNavGroup(entry) && groupContainsActivePath(entry, pathname)) {
+          next[entry.id] = true;
+        }
+      }
+      return next;
+    });
+    // Only react to route changes for auto-expand
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
 
   const handleLogout = async () => {
     try {
@@ -40,6 +177,10 @@ export function Sidebar() {
     logout();
     toast.success("Sesión cerrada");
     router.push("/login");
+  };
+
+  const toggleGroup = (id: string) => {
+    setOpenGroups((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
   return (
@@ -68,32 +209,26 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 p-2 space-y-1 overflow-y-auto scrollbar-hide">
-        {visibleItems.map((item) => {
-          const isActive =
-            pathname === item.href || pathname.startsWith(`${item.href}/`);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group",
-                collapsed ? "justify-center" : "",
-                isActive
-                  ? "bg-white/10 text-sidebar-foreground"
-                  : "text-slate-400 hover:text-sidebar-foreground hover:bg-white/5"
-              )}
-              title={collapsed ? item.label : undefined}
-            >
-              <item.icon
-                className={cn(
-                  "w-5 h-5 shrink-0",
-                  isActive
-                    ? "text-sidebar-foreground"
-                    : "text-slate-500 group-hover:text-sidebar-foreground"
-                )}
+        {visibleEntries.map((entry) => {
+          if (entry.kind === "link") {
+            return (
+              <NavLinkRow
+                key={entry.href}
+                item={entry}
+                pathname={pathname}
+                collapsed={collapsed}
               />
-              {!collapsed && <span>{item.label}</span>}
-            </Link>
+            );
+          }
+          return (
+            <NavGroupBlock
+              key={entry.id}
+              group={entry}
+              pathname={pathname}
+              collapsed={collapsed}
+              open={Boolean(openGroups[entry.id])}
+              onToggle={() => toggleGroup(entry.id)}
+            />
           );
         })}
       </nav>

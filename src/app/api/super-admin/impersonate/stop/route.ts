@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { createAuthenticatedLoginResponse } from "@/lib/login-session";
+import { isConfiguredSuperAdminEmail } from "@/lib/super-admin-access";
 
 export async function POST(request: NextRequest) {
   let session;
@@ -33,7 +34,11 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  if (!superAdmin || superAdmin.role !== "SAAS_SUPER_ADMIN" || !superAdmin.emailVerifiedAt) {
+  if (
+    !superAdmin ||
+    !isConfiguredSuperAdminEmail(superAdmin.email) ||
+    !superAdmin.emailVerifiedAt
+  ) {
     return NextResponse.json({ error: "Sesión de super admin inválida" }, { status: 403 });
   }
 

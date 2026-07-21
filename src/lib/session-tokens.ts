@@ -3,6 +3,7 @@ import type { NextResponse } from "next/server";
 import type { UserRole } from "@/types/user";
 import type { ServerSession } from "@/lib/server-auth";
 import { getJwtSecret, getJwtRefreshSecret } from "@/lib/server-auth";
+import { resolveEffectiveRole } from "@/lib/super-admin-access";
 
 export interface TokenPayload {
   userId: string;
@@ -32,14 +33,16 @@ export function extractTokenPayload(payload: JWTPayload): TokenPayload | null {
 }
 
 export function payloadToSession(payload: TokenPayload): ServerSession {
+  const isImpersonating = Boolean(payload.impersonatorId);
+
   return {
     userId: payload.userId,
     companyId: payload.companyId,
-    role: payload.role,
+    role: resolveEffectiveRole(payload.email, payload.role, isImpersonating),
     email: payload.email,
     name: payload.name,
     impersonatorUserId: payload.impersonatorId ?? null,
-    isImpersonating: Boolean(payload.impersonatorId),
+    isImpersonating,
   };
 }
 

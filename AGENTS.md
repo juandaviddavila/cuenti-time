@@ -31,11 +31,19 @@ export NVM_DIR="$HOME/.nvm" && source "$NVM_DIR/nvm.sh" && nvm use v24.13.1
 
 # Dev
 pnpm dev
+pnpm marketing:dev # landing + blog en :3008
 
 # Instalar dependencias
 pnpm install
 
+# MCP RRHH (remoto Streamable HTTP; DATABASE_URL solo en el origen)
+pnpm mcp:build
+pnpm mcp:dev:http      # :4101 /mcp — auth Bearer cuenti_…
+pnpm mcp:start:http
+pnpm mcp:test
+
 # Prisma (ORDEN IMPORTANTE: generate → db push → seed)
+# Tras cambiar schema: generate + db push + REINICIAR next (si no, Unknown field en runtime)
 pnpm db:generate   # = prisma generate
 pnpm db:push       # = prisma db push
 pnpm db:seed       # = prisma db seed
@@ -44,6 +52,8 @@ pnpm db:studio     # = prisma studio (UI gráfica)
 # Build / Lint
 pnpm build
 pnpm lint
+pnpm marketing:build
+pnpm marketing:lint
 ```
 
 ## Gestor de paquetes
@@ -51,9 +61,18 @@ pnpm lint
 - Configuración en `pnpm-workspace.yaml` — `allowBuilds` para Prisma y unrs-resolver
 - `.npmrc` con `shamefully-hoist=true` (requerido por Next.js SWC y Radix UI)
 - `packageManager: "pnpm@11.9.0"` declarado en `package.json`
-- Para nuevas dependencias: `pnpm add <pkg>` / `pnpm add -D <pkg>`
+- Para nuevas dependencias: `pnpm add <pkg>` / `pnpm add -D <pkg>` — versiones **exactas** (sin `^`/`~`); `.npmrc` tiene `save-exact=true`
 
 ## Arquitectura
+
+### Aplicaciones del monorepo
+| Aplicación | Ruta | Puerto | Responsabilidad |
+|---|---|---:|---|
+| SaaS | raíz | 7578 | Producto autenticado, API y pagos |
+| Marketing | `packages/marketing` | 3008 | Landing pública, recursos y SEO/IA |
+| MCP RRHH | `packages/hr-mcp-server` | 4101 | Servidor de herramientas MCP |
+
+La app de marketing no importa Prisma, JWT ni componentes internos del dashboard. Sus CTA apuntan a `NEXT_PUBLIC_APP_URL`.
 
 ### Estructura de rutas (App Router)
 ```
@@ -71,6 +90,11 @@ src/app/
 │   ├── attendance-history/
 │   ├── reports/
 │   ├── settings/
+│   │   ├── integrations/    # Tabs: Tokens API | MCP | Webhooks
+│   │   │   ├── api-tokens/
+│   │   │   ├── mcp/         # Guía Claude/ChatGPT remoto
+│   │   │   └── webhooks/
+│   │   └── …
 │   ├── users/
 │   ├── plans/               # Redirige a /pricing
 │   ├── audit/
@@ -85,8 +109,9 @@ src/app/
 - Si el cliente necesita otra empresa, debe **registrarse de nuevo** (`/register` crea `Company` + `User` COMPANY_ADMIN en una transacción).
 - **Una empresa tiene muchas sucursales** (`Branch[]`). Los empleados pertenecen a una sucursal de esa empresa.
 - La plataforma es **multi-tenant** (muchas empresas en el mismo SaaS), pero cada tenant se accede con su propia cuenta.
-- `SAAS_SUPER_ADMIN` es el operador de plataforma: ve todas las empresas en `/companies`, pero los clientes (`COMPANY_ADMIN`, etc.) gestionan **solo su empresa** vía `/settings` y módulos operativos (sucursales, empleados…).
-- El JWT contiene `{ userId, companyId, role }`. Usuarios de empresa siempre tienen `companyId` fijo.
+- `SAAS_SUPER_ADMIN` es el operador de plataforma: ve todas las empresas en `/super-admin`, pero los clientes (`COMPANY_ADMIN`, etc.) gestionan **solo su empresa**.
+- La elevación `SAAS_SUPER_ADMIN` depende exclusivamente de la allowlist `SUPER_ADMIN_EMAILS` (emails separados por coma), no del rol persistido en DB. El usuario sí debe existir en DB para autenticarse.
+- El JWT contiene `{ userId, companyId, role, email, name }`; `payloadToSession()` recalcula el rol efectivo contra la allowlist en cada request.
 - Separación estricta de datos entre empresas en todas las queries.
 
 ### Roles (menor a mayor permisos)
@@ -94,8 +119,8 @@ src/app/
 2. `FACE_REGISTRAR` — Registro facial + kiosco
 3. `BRANCH_SUPERVISOR` — Sucursal asignada
 4. `COMPANY_ADMIN` — Toda la empresa
-5. `SAAS_SUPER_ADMIN` — Plataforma completa
-6. `DEVELOPER` — API tokens, webhooks, docs y ejemplos técnicos
+5. `SAAS_SUPER_ADMIN` — Plataforma completa; asignado por `SUPER_ADMIN_EMAILS`
+6. `DEVELOPER` — API tokens, webhooks, MCP, docs y ejemplos técnicos
 
 ## Base de datos — Modelos Prisma
 
@@ -116,6 +141,7 @@ AuditLog (registra todos los cambios)
 - Embeddings faciales: `Employee.faceEmbedding Unsupported("vector(128)")` con índice `ivfflat`; crear extensión/índice con `prisma/pgvector.sql`
 - `Plan` y `PlanType` fueron eliminados. El modelo SaaS actual usa `Company.subscriptionExpiresAt`, `Company.maxEmployees`, `Payment` y futura integración Wompi.
 - `Company.maxEmployees` limita únicamente nuevos registros faciales, no la creación de empleados básicos.
+- `Company.faceMatchThreshold` (Float, default `0.6`): distancia euclidiana máxima para match facial (menor = más estricto). Editable en `/settings`; usado en `face/search`, `face/descriptors`, kiosk y registro facial.
 - `Branch.latitude`, `Branch.longitude`, `Branch.googlePlaceId`, `Branch.radiusMeters` controlan geofence para marcaciones faciales.
 
 ## Capa de IA Facial (Mock → Producción)
@@ -263,6 +289,7 @@ src/app/api/
 
 - Todo Server Component que consulte datos DEBE llamar `getServerSession()` y filtrar con `getCompanyFilter(session)` de `src/lib/server-auth.ts`.
 - `getCompanyFilter()` devuelve `{}` para `SAAS_SUPER_ADMIN` (ve todo) y `{ companyId }` para todos los demás.
+- Para proteger `/super-admin` y sus APIs usar `isSuperAdmin(session)` de `src/lib/super-admin.ts`; no basta con leer el rol de Prisma.
 - Al buscar recursos por ID (employee, branch, etc.) siempre verificar que `resource.companyId === session.companyId` antes de devolver datos.
 - **Nunca** hacer `prisma.xxx.findMany()` sin filtro en producción — fuga multi-tenant.
 
@@ -285,7 +312,8 @@ src/app/api/
 - Nombre de producto: **cuenti time** (`NEXT_PUBLIC_APP_NAME` / `src/lib/brand.ts`).
 - Logos: `https://app-work.cuenti.co/brand/logo-dark.svg` y `logo-simbolo.svg`.
 - Login/auth: UI minimalista neutra (panel oscuro + formulario claro); sin degradados azul/naranja.
-- Shell: sidebar oscuro, header con buscador, tokens CSS neutros en `globals.css`.
+- Shell: sidebar oscuro, header **sin** buscador global (se quitó; no hacía nada), tokens CSS neutros en `globals.css`.
+- Header muestra `companyName` del usuario en el menú de perfil.
 
 ## Geolocalización de sucursales
 - `/branches` permite editar `latitude`, `longitude`, `radiusMeters` y `googlePlaceId`.
@@ -340,9 +368,9 @@ src/app/api/
 - [x] Informes `/reports` con pestaña detallada y exportación Excel/PDF
 - [x] Usuarios `/users` + Planes `/plans`
 - [x] Auditoría `/audit` con filtros avanzados, paginación y diff de cambios
-- [x] Configuración `/settings` + Tokens API `/settings/api-tokens` + Perfil `/profile`
+- [x] Configuración `/settings` + Integraciones (Tokens | MCP | Webhooks) + Perfil `/profile`
 - [x] API pública v1 con autenticación Bearer y Swagger UI en `/api/v1/docs`
-- [x] Todas las API routes: companies, branches, employees, positions, shifts, employee-shifts, incident-types, incidents, users, attendance, reports, api-tokens, face, audit/search, v1
+- [x] Todas las API routes: companies, branches, employees, positions, shifts, employee-shifts, incident-types, incidents, users, attendance, reports, api-tokens, face, audit/search, v1, webhooks
 - [x] Email verification en registro, trial 7 días y login bloqueado para email no verificado
 - [x] Refresh token 7 días + access token 15 minutos + endpoint `/api/auth/refresh`
 - [x] Suscripción vencida con `/subscription-expired` y `/pricing` pública básica
@@ -351,25 +379,50 @@ src/app/api/
 - [x] SDD OpenSpec: `branch-form-cleanup` archivado; main spec en `openspec/specs/branch-management/spec.md`
 - [x] Marca cuenti time + logos app-work; login minimalista; AuthSessionProvider + refresh deslizante
 - [x] Cargo por defecto `general` al crear cuenta/empresa
-
+- [x] `Company.faceMatchThreshold` + deps exactas (`save-exact`) + header sin buscador vacío
+- [x] MCP RRHH remoto + webhooks con reintentos/logs (ver secciones abajo)
 ## Webhooks outbound
 - Catálogo: `src/lib/webhooks/events.ts` (empleados, asistencia, novedades, sucursales).
-- Motor: `src/lib/webhooks/dispatch.ts` — enqueue `WebhookDelivery`, firma HMAC `X-Cuenti-Signature`, 1 intento inmediato + hasta **3 reintentos cada 10 min** (timer in-process + respaldo `POST /api/webhooks/retry` con `CRON_SECRET`) → `FAILED`.
+- Motor: `src/lib/webhooks/dispatch.ts` — enqueue `WebhookDelivery`, firma HMAC `X-Cuenti-Signature`, **1 intento inmediato + hasta 3 reintentos cada 10 min** (máx. 4 envíos; `WEBHOOK_MAX_RETRIES=3`) → `FAILED`.
+- Reintentos: timer in-process (`scheduleInProcessRetry`) + respaldo `POST /api/webhooks/retry` (`CRON_SECRET`).
+- Logs estructurados en consola con prefijo `[webhook]` (éxito, fallo, reintento, worker).
 - Multi-tenant: solo suscripciones de `companyId` del emisor; crear/listar exige `session.companyId`.
 - Callers: attendance (dashboard + v1), employees create/update/deactivate/face, incidents CRUD, branches create/update.
+- UI: `/settings/integrations/webhooks`.
+
+## MCP RRHH (`packages/hr-mcp-server`)
+- Servidor MCP **remoto** Streamable HTTP (`src/http.ts`, puerto default **4101**, path `/mcp`). Stdio (`src/index.ts`) solo para dev.
+- Auth **dual** por petición:
+  1. `Authorization: Bearer cuenti_…` — token API directo (Claude / Cursor)
+  2. `Authorization: Bearer mcp_at_…` — access token OAuth 2.1 (ChatGPT connectors)
+- OAuth 2.1 **adicional** (no reemplaza Bearer): PKCE S256, DCR `POST /register`, consent `/authorize` (pegar token API), `/.well-known/oauth-*`, refresh `mcp_rt_…`. Provider: `src/oauth-provider.ts`.
+- **Cliente (empresa):** `NEXT_PUBLIC_MCP_URL` + token (header Bearer o consent OAuth). **Nunca** `DATABASE_URL` ni ruta absoluta al binario.
+- **Origen (infra):** proceso `hr-mcp-server` en `:4101`. Next hace **rewrite/proxy** de `/mcp`, `/.well-known/*`, `/authorize`, `/token`, `/register`, `/revoke` → `MCP_UPSTREAM_URL` (mismo origen que la app/túnel). Vars: `DATABASE_URL`, `MCP_PUBLIC_URL` (issuer HTTPS público), `MCP_UPSTREAM_URL`, `MCP_ALLOWED_HOSTS`.
+- Consumo: **Claude** (Bearer) y **ChatGPT** (OAuth). Cursor opcional con `mcp-remote`.
+- 14 tools read-only. Incluye reportes RRHH, marcaciones en detalle (`get_attendance_records`), búsqueda de empleados (`find_employee`) y presentes actuales (`get_present_now`). Motor `src/lib/hr/`.
+- UI: `/settings/integrations/mcp`. Scripts: `pnpm mcp:dev:http` / `mcp:start:http` / `mcp:build` / `mcp:test`.
+
+## Integraciones (UI)
+- `/settings/integrations` → tabs: **Tokens API** | **MCP** | **Webhooks** (`integrations-nav.tsx`).
+- Tokens: inactivar/reactivar/eliminar hard; reveal con `tokenCipher` AES-GCM.
+- Permiso: `canManageIntegrations` (roles DEVELOPER / COMPANY_ADMIN / etc. según `user-permissions`).
 
 ## Pendientes SaaS grandes
-- [ ] Consola `/super-admin` para métricas, edición de suscripción/cupo e impersonación con banner/auditoría
+- [x] Consola `/super-admin` para métricas, edición de suscripción/cupo e impersonación con banner/auditoría; acceso por `SUPER_ADMIN_EMAILS`
 - [ ] Wompi: pagos manuales mensual/anual, confirmación y webhook
-- [x] Webhooks outbound: catálogo estratégico, HMAC, deliveries, retry cron (`/api/webhooks/retry`)
+- [x] Webhooks outbound: catálogo, HMAC, deliveries, 1+3 reintentos/10min, logs `[webhook]`
+- [x] MCP RRHH remoto (HTTP :4101) + tab Integraciones (Claude/ChatGPT first)
+- [x] OAuth 2.1 en endpoint MCP (DCR/PKCE/consent) **además** de Bearer `cuenti_`
+- [ ] Persistencia OAuth en DB si hay multi-instancia (hoy persiste en archivo local `.data/mcp-oauth-store.json`)
+- [ ] Deploy MCP detrás de Cloudflare (`NEXT_PUBLIC_MCP_URL` / `MCP_PUBLIC_URL` HTTPS)
 - [ ] Reporte diario por email de tardanzas/ausencias agrupado por turno y sucursal
 - [ ] Novedades colectivas por `shiftId` en UI/reportes
-- [ ] `/settings/api-tokens` con tabs Tokens, Docs y Ejemplos
 - [ ] `/pricing` final conectada a pagos y cálculo de empleados extra
 
 ## Quirks Next.js
 - `useSearchParams()` debe estar dentro de un componente envuelto en `<Suspense>` (ver `facial-registration/page.tsx`)
 - `getCompanyFilter()` retorna `{ companyId }` — NO usar en consultas a `prisma.company` (que filtra por `id`). Usar `{ id: session.companyId }` directamente para Company.
 - `z.preprocess()` causa conflicto de tipos con React Hook Form resolver. Usar `.optional().refine()` en su lugar.
+- Tras cambiar `schema.prisma`: `pnpm db:generate && pnpm db:push` y **reiniciar** el proceso `next` (el client no hot-reloadea).
 
-*Última actualización: 2026-07-20. SDD `branch-form-cleanup` archivado. Marca cuenti time, sesión con bootstrap/refresh deslizante, geofence solo móvil, cargo `general` por defecto. DB local `cuenti_time`, logos app-work.cuenti.co. Dev: `http://localhost:7578`.*
+*Última actualización: 2026-07-20 (tarde). MCP OAuth 2.1 adicional + Bearer; webhooks 1+3×10min; Integraciones Tokens|MCP|Webhooks; deps exactas; faceMatchThreshold; header sin buscador. Dev: `http://localhost:7578`, MCP `:4101`.*

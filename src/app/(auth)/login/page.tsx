@@ -319,25 +319,6 @@ export default function LoginPage() {
               Crear cuenta empresarial
             </Link>
           </p>
-
-          {step === "credentials" && (
-            <div className="rounded-xl border border-border bg-muted/40 p-4 space-y-2">
-              <p className="text-muted-foreground text-[11px] font-medium uppercase tracking-wider">
-                Credenciales de demo
-              </p>
-              <div className="space-y-1 text-xs text-muted-foreground">
-                <p>
-                  <span className="text-foreground">Super Admin:</span> superadmin@cuenti.com
-                </p>
-                <p>
-                  <span className="text-foreground">Empresa 1:</span> admin.distribuidora@cuenti.com
-                </p>
-                <p>
-                  <span className="text-foreground">Contraseña:</span> Admin2024!
-                </p>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

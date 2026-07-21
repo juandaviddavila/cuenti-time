@@ -38,6 +38,14 @@ const PUBLIC_PATHS = [
   "/api/webhooks/wompi",
   "/api/webhooks/retry",
   "/api/v1",
+  // MCP remoto + OAuth 2.1 (proxy → hr-mcp-server :4101)
+  "/mcp",
+  "/authorize",
+  "/token",
+  "/register",
+  "/revoke",
+  "/.well-known",
+  "/health/mcp",
 ];
 
 // File extensions that should always be served without auth checks.

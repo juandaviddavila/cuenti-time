@@ -8,6 +8,7 @@ import {
   signRefreshToken,
   setAuthCookies,
 } from "@/lib/session-tokens";
+import { resolveEffectiveRole } from "@/lib/super-admin-access";
 
 export async function POST(request: NextRequest) {
   const refreshToken = request.cookies.get("refresh-token")?.value;
@@ -42,7 +43,11 @@ export async function POST(request: NextRequest) {
     const refreshedPayload = {
       userId: user.id,
       companyId: user.companyId,
-      role: user.role,
+      role: resolveEffectiveRole(
+        user.email,
+        user.role,
+        Boolean(tokenPayload.impersonatorId)
+      ),
       email: user.email,
       name: user.name,
       impersonatorId: tokenPayload.impersonatorId,

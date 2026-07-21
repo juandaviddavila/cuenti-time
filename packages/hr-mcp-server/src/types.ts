@@ -1,4 +1,4 @@
-import type { ApiTokenContext } from "@/lib/api-token-auth";
+import type { ApiTokenContext } from "@/lib/api-token-core";
 
 export interface ToolContext {
   token: ApiTokenContext;

@@ -1,7 +1,6 @@
 import { startOfDay, endOfDay, eachDayOfInterval } from "date-fns";
 import { prisma } from "@/lib/prisma";
-import type { ServerSession } from "@/lib/server-auth";
-import { getCompanyFilter } from "@/lib/server-auth";
+import { getCompanyFilter, type TenantSession } from "@/lib/tenant";
 import {
   evaluatePeriod,
   filterEvaluationsForReport,
@@ -28,7 +27,7 @@ export interface HrQueryParams {
 }
 
 async function resolveSupervisorBranchId(
-  session: ServerSession
+  session: TenantSession
 ): Promise<string | undefined> {
   if (session.role !== "BRANCH_SUPERVISOR") return undefined;
   const user = await prisma.user.findUnique({
@@ -39,7 +38,7 @@ async function resolveSupervisorBranchId(
 }
 
 export async function loadHrEvaluations(
-  session: ServerSession,
+  session: TenantSession,
   params: HrQueryParams
 ): Promise<{
   evaluations: DayEvaluation[];

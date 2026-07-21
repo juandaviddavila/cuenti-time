@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Key, Webhook } from "lucide-react";
+import { Bot, Key, Webhook } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const TABS = [
   { href: "/settings/integrations/api-tokens", label: "Tokens API", icon: Key },
+  { href: "/settings/integrations/mcp", label: "MCP", icon: Bot },
   { href: "/settings/integrations/webhooks", label: "Webhooks", icon: Webhook },
 ] as const;
 

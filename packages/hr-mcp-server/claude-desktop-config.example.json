@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "cuenti-hr": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/repo/packages/hr-mcp-server/dist/packages/hr-mcp-server/src/index.js"
+      ],
+      "env": {
+        "CUENTI_MCP_TOKEN": "cuenti_xxxxxxxx",
+        "DATABASE_URL": "postgresql://root:1234@localhost:5432/cuenti_time"
+      }
+    }
+  }
+}

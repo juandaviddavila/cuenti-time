@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { resolveEffectiveRole } from "@/lib/super-admin-access";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -74,7 +75,10 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
     }
 
-    return NextResponse.json(user);
+    return NextResponse.json({
+      ...user,
+      role: resolveEffectiveRole(user.email, user.role),
+    });
   } catch (err) {
     console.error("GET /api/users/[id] error:", err);
     return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });
@@ -129,11 +133,10 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     );
   }
 
-  // COMPANY_ADMIN cannot assign or remove SAAS_SUPER_ADMIN role
-  if (session.role === "COMPANY_ADMIN" && parsed.data.role === "SAAS_SUPER_ADMIN") {
+  if (parsed.data.role === "SAAS_SUPER_ADMIN") {
     return NextResponse.json(
-      { error: "No tienes permiso para asignar ese rol" },
-      { status: 403 }
+      { error: "El acceso de super admin se configura en SUPER_ADMIN_EMAILS" },
+      { status: 422 }
     );
   }
 
@@ -167,7 +170,10 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       oldValues: { name: existing.name, email: existing.email, role: existing.role, status: existing.status, branchId: existing.branchId, bypassGeofence: existing.bypassGeofence, canManageIntegrations: existing.canManageIntegrations },
       newValues: { name: user.name, email: user.email, role: user.role, status: user.status, branchId: user.branchId, bypassGeofence: user.bypassGeofence, canManageIntegrations: user.canManageIntegrations },
     });
-    return NextResponse.json(user);
+    return NextResponse.json({
+      ...user,
+      role: resolveEffectiveRole(user.email, user.role),
+    });
   } catch (err) {
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&

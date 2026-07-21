@@ -7,6 +7,7 @@ import {
   setAuthCookies,
   type TokenPayload,
 } from "@/lib/session-tokens";
+import { resolveEffectiveRole } from "@/lib/super-admin-access";
 
 type SessionUser = Pick<
   User,
@@ -26,10 +27,15 @@ export async function createAuthenticatedLoginResponse(
   user: SessionUser,
   options?: { impersonatorId?: string }
 ) {
+  const effectiveRole = resolveEffectiveRole(
+    user.email,
+    user.role,
+    Boolean(options?.impersonatorId)
+  );
   const payload: TokenPayload = {
     userId: user.id,
     companyId: user.companyId,
-    role: user.role,
+    role: effectiveRole,
     email: user.email,
     name: user.name,
     impersonatorId: options?.impersonatorId,
@@ -63,7 +69,7 @@ export async function createAuthenticatedLoginResponse(
       id: user.id,
       name: user.name,
       email: user.email,
-      role: user.role,
+      role: effectiveRole,
       companyId: user.companyId,
       companyName,
       avatar: user.avatar,

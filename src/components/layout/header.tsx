@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Bell, Search, Moon, Sun, Monitor, Menu } from "lucide-react";
+import { Bell, Moon, Sun, Monitor, Menu } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuthStore } from "@/store/auth-store";
 import { Button } from "@/components/ui/button";
@@ -50,28 +50,7 @@ export function Header({ title, alertCount = 0 }: HeaderProps) {
           )}
         </div>
 
-        <div className="hidden md:flex flex-1 max-w-xl mx-auto">
-          <label className="relative w-full">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-            <input
-              type="search"
-              placeholder="Buscar..."
-              className="w-full h-9 rounded-lg border border-border bg-muted/40 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-ring/30 focus:border-ring/40 transition-shadow"
-              aria-label="Buscar"
-            />
-          </label>
-        </div>
-
         <div className="flex items-center gap-1.5 ml-auto">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="md:hidden text-muted-foreground hover:text-foreground"
-            aria-label="Buscar"
-          >
-            <Search className="w-4 h-4" />
-          </Button>
-
           <Button
             variant="ghost"
             size="icon"

@@ -10,24 +10,28 @@
   },
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsc",
+    "dev:http": "tsx src/http.ts",
+    "build": "tsc && tsc-alias --resolve-full-paths",
+    "start:http": "node ./dist/packages/hr-mcp-server/src/http.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "benchmark": "tsx src/__benchmarks__/hr-engine.ts",
     "inspect": "npx @modelcontextprotocol/inspector node ./dist/packages/hr-mcp-server/src/index.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "@prisma/client": "^5.22.0",
-    "bcryptjs": "^3.0.3",
-    "date-fns": "^4.4.0",
-    "zod": "^4.4.3"
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@prisma/client": "5.22.0",
+    "bcryptjs": "3.0.3",
+    "date-fns": "4.4.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
-    "@types/node": "^20.19.43",
-    "tsx": "^4.23.1",
-    "typescript": "^5",
-    "vitest": "^3.0.0"
+    "@types/bcryptjs": "2.4.6",
+    "@types/node": "20.19.43",
+    "tsc-alias": "1.9.1",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
   }
 }
