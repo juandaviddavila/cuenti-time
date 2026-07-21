@@ -8,8 +8,12 @@
   --muted: #68665f;
   --paper: #f6f3eb;
   --cream: #fffdf7;
+  --navy: #071018;
+  --navy-soft: #0b1821;
+  --mint: #55e6c1;
+  --mint-soft: #a8f5df;
   --sun: #f9c626;
-  --line: rgba(23, 23, 20, 0.12);
+  --line: rgba(196, 226, 219, 0.12);
 }
 
 * {
@@ -24,13 +28,15 @@ body {
   margin: 0;
   background: var(--cream);
   color: var(--ink);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-  background: var(--sun);
-  color: var(--ink);
+  background: var(--mint);
+  color: var(--navy);
 }
 
 a,
@@ -40,7 +46,7 @@ input {
 }
 
 .page-shell {
-  width: min(1180px, calc(100% - 32px));
+  width: min(1200px, calc(100% - 32px));
   margin-inline: auto;
 }
 
@@ -48,32 +54,36 @@ input {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  color: #5c5438;
+  color: #397769;
   font-size: 0.75rem;
-  font-weight: 800;
-  letter-spacing: 0.13em;
+  font-weight: 700;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
+.landing-dark .eyebrow {
+  color: var(--mint);
+}
+
 .eyebrow::before {
-  width: 1.6rem;
-  height: 2px;
-  background: var(--sun);
+  width: 1.25rem;
+  height: 1px;
+  background: currentColor;
   content: "";
 }
 
 .display-title {
-  font-size: clamp(2.6rem, 7vw, 6.7rem);
-  font-weight: 800;
-  letter-spacing: -0.075em;
-  line-height: 0.94;
+  font-size: clamp(2.75rem, 6.5vw, 5.9rem);
+  font-weight: 650;
+  letter-spacing: -0.06em;
+  line-height: 0.98;
 }
 
 .section-title {
-  font-size: clamp(2rem, 4.5vw, 4rem);
-  font-weight: 800;
-  letter-spacing: -0.055em;
-  line-height: 1;
+  font-size: clamp(2rem, 4.2vw, 3.7rem);
+  font-weight: 650;
+  letter-spacing: -0.05em;
+  line-height: 1.04;
 }
 
 .text-balance {
@@ -83,39 +93,36 @@ input {
 .sun-grid {
   background-color: var(--sun);
   background-image:
-    linear-gradient(rgba(23, 23, 20, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(23, 23, 20, 0.08) 1px, transparent 1px);
-  background-size: 42px 42px;
+    linear-gradient(rgba(7, 16, 24, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(7, 16, 24, 0.1) 1px, transparent 1px);
+  background-size: 48px 48px;
 }
 
 .fine-grid {
   background-image:
-    linear-gradient(rgba(23, 23, 20, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(23, 23, 20, 0.045) 1px, transparent 1px);
-  background-size: 48px 48px;
+    linear-gradient(rgba(119, 232, 204, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(119, 232, 204, 0.055) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: linear-gradient(to bottom, black, transparent 88%);
 }
 
 .dot-field {
-  background-image: radial-gradient(rgba(23, 23, 20, 0.2) 0.8px, transparent 0.8px);
-  background-size: 14px 14px;
+  background-image: radial-gradient(rgba(85, 230, 193, 0.18) 0.8px, transparent 0.8px);
+  background-size: 16px 16px;
 }
 
-.hero-orbit {
-  animation: orbit 18s linear infinite;
+.hero-glow {
+  background:
+    radial-gradient(circle at 50% 0%, rgba(85, 230, 193, 0.13), transparent 38%),
+    radial-gradient(circle at 90% 28%, rgba(249, 198, 38, 0.07), transparent 24%);
 }
 
 .float-soft {
-  animation: float-soft 5s ease-in-out infinite;
+  animation: float-soft 6s ease-in-out infinite;
 }
 
 .range-sun {
-  accent-color: var(--sun);
-}
-
-@keyframes orbit {
-  to {
-    transform: rotate(360deg);
-  }
+  accent-color: var(--mint);
 }
 
 @keyframes float-soft {
@@ -141,6 +148,6 @@ input {
 
 @media (min-width: 768px) {
   .page-shell {
-    width: min(1180px, calc(100% - 64px));
+    width: min(1200px, calc(100% - 64px));
   }
 }

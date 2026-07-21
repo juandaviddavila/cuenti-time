@@ -7,6 +7,7 @@ import {
   clampFaceMatchThreshold,
   DEFAULT_FACE_MATCH_THRESHOLD,
 } from "@/lib/face-match-threshold";
+import { stringToBigint } from "@/lib/bigint";
 
 interface FaceDescriptorRow {
   employeeId: string;
@@ -32,11 +33,11 @@ export async function GET() {
 
   const employees = await prisma.$queryRaw<FaceDescriptorRow[]>`
     SELECT
-      e."id" AS "employeeId",
+      e."id"::text AS "employeeId",
       e."fullName",
       p."name" AS "position",
       e."photo",
-      e."branchId",
+      e."branchId"::text,
       e."faceEmbedding"::text AS "descriptor"
     FROM "Employee" e
     LEFT JOIN "Position" p ON p."id" = e."positionId"
@@ -48,7 +49,7 @@ export async function GET() {
   let faceMatchThreshold = DEFAULT_FACE_MATCH_THRESHOLD;
   if (session.companyId) {
     const company = await prisma.company.findUnique({
-      where: { id: session.companyId },
+      where: { id: stringToBigint(session.companyId) },
       select: { faceMatchThreshold: true },
     });
     faceMatchThreshold = clampFaceMatchThreshold(

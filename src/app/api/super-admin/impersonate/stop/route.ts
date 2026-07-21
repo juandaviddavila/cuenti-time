@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { createAuthenticatedLoginResponse } from "@/lib/login-session";
 import { isConfiguredSuperAdminEmail } from "@/lib/super-admin-access";
+import { stringToBigint } from "@/lib/bigint";
 
 export async function POST(request: NextRequest) {
   let session;
@@ -18,7 +19,7 @@ export async function POST(request: NextRequest) {
   }
 
   const superAdmin = await prisma.user.findUnique({
-    where: { id: session.impersonatorUserId },
+    where: { id: stringToBigint(session.impersonatorUserId) },
     select: {
       id: true,
       name: true,
@@ -46,7 +47,7 @@ export async function POST(request: NextRequest) {
     request,
     session: {
       ...session,
-      userId: session.impersonatorUserId,
+       userId: session.impersonatorUserId,
       role: "SAAS_SUPER_ADMIN",
       companyId: null,
       isImpersonating: false,

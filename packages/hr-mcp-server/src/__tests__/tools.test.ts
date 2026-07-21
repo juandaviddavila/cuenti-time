@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { listToolDefinitions, getTool } from "../tools.js";
 import { prisma } from "@/lib/prisma";
 import { createTestToken, cleanupTestToken, type TestToken } from "./helpers.js";
+import { stringToBigint } from "@/lib/bigint";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const toolsFile = readFileSync(join(__dirname, "../tools.ts"), "utf-8");
@@ -71,7 +72,7 @@ describe("entity tools", () => {
   it("get_company_info returns the token company", async () => {
     const tool = getTool("get_company_info");
     expect(tool).toBeDefined();
-    const result = await tool!.execute({}, { token: { tokenId: testToken.tokenId, companyId: testToken.companyId, scopes: ["read"] }, companyId: testToken.companyId });
+    const result = await tool!.execute({}, { token: { tokenId: testToken.tokenId, companyId: testToken.companyId, scopes: ["read"] }, companyId: stringToBigint(testToken.companyId) });
     expect(result.content).toHaveLength(1);
     const data = JSON.parse(result.content[0].text);
     expect(data.data.id).toBe(testToken.companyId);
@@ -79,7 +80,7 @@ describe("entity tools", () => {
 
   it("list_employees returns only company employees", async () => {
     const tool = getTool("list_employees");
-    const result = await tool!.execute({}, { token: { tokenId: testToken.tokenId, companyId: testToken.companyId, scopes: ["read"] }, companyId: testToken.companyId });
+    const result = await tool!.execute({}, { token: { tokenId: testToken.tokenId, companyId: testToken.companyId, scopes: ["read"] }, companyId: stringToBigint(testToken.companyId) });
     const data = JSON.parse(result.content[0].text);
     expect(data.total).toBe(0);
     expect(data.data).toEqual([]);
@@ -95,28 +96,28 @@ describe("attendance detail tools", () => {
     testToken = await createTestToken();
     const branch = await prisma.branch.create({
       data: {
-        companyId: testToken.companyId,
+        companyId: stringToBigint(testToken.companyId),
         name: "MCP Main Branch",
         code: "MCP-MAIN",
       },
     });
-    branchId = branch.id;
+    branchId = branch.id.toString();
     const employee = await prisma.employee.create({
       data: {
-        companyId: testToken.companyId,
-        branchId,
+        companyId: stringToBigint(testToken.companyId),
+        branchId: stringToBigint(branchId),
         fullName: "Ana Prueba MCP",
         documentNumber: `mcp-employee-${Date.now()}`,
         email: "ana.mcp@example.com",
         internalCode: "EMP-MCP-01",
       },
     });
-    employeeId = employee.id;
+    employeeId = employee.id.toString();
     await prisma.attendanceRecord.create({
       data: {
-        companyId: testToken.companyId,
-        branchId,
-        employeeId,
+        companyId: stringToBigint(testToken.companyId),
+        branchId: stringToBigint(branchId),
+        employeeId: stringToBigint(employeeId),
         type: "CHECK_IN",
         recordedAt: new Date(2026, 6, 20, 8, 0, 0),
       },
@@ -124,9 +125,9 @@ describe("attendance detail tools", () => {
   });
 
   afterAll(async () => {
-    await prisma.attendanceRecord.deleteMany({ where: { employeeId } });
-    await prisma.employee.deleteMany({ where: { id: employeeId } });
-    await prisma.branch.deleteMany({ where: { id: branchId } });
+    await prisma.attendanceRecord.deleteMany({ where: { employeeId: stringToBigint(employeeId) } });
+    await prisma.employee.deleteMany({ where: { id: stringToBigint(employeeId) } });
+    await prisma.branch.deleteMany({ where: { id: stringToBigint(branchId) } });
     await cleanupTestToken();
   });
 
@@ -140,7 +141,7 @@ describe("attendance detail tools", () => {
           companyId: testToken.companyId,
           scopes: ["read"],
         },
-        companyId: testToken.companyId,
+        companyId: stringToBigint(testToken.companyId),
       }
     );
     const data = JSON.parse(result.content[0].text);
@@ -162,7 +163,7 @@ describe("attendance detail tools", () => {
           companyId: testToken.companyId,
           scopes: ["read"],
         },
-        companyId: testToken.companyId,
+        companyId: stringToBigint(testToken.companyId),
       }
     );
     const data = JSON.parse(result.content[0].text);
@@ -181,7 +182,7 @@ describe("attendance detail tools", () => {
           companyId: testToken.companyId,
           scopes: ["read"],
         },
-        companyId: testToken.companyId,
+        companyId: stringToBigint(testToken.companyId),
       }
     );
     const data = JSON.parse(result.content[0].text);
@@ -205,21 +206,21 @@ describe("cross-tenant validation", () => {
         email: "mcp-other@cuenti.co",
       },
     });
-    otherCompanyId = otherCompany.id;
+    otherCompanyId = otherCompany.id.toString();
 
     const otherBranch = await prisma.branch.create({
       data: {
-        companyId: otherCompanyId,
+        companyId: stringToBigint(otherCompanyId),
         name: "Other Branch",
         code: "OTH",
       },
     });
-    otherBranchId = otherBranch.id;
+    otherBranchId = otherBranch.id.toString();
   });
 
   afterAll(async () => {
-    await prisma.branch.deleteMany({ where: { companyId: otherCompanyId } });
-    await prisma.company.deleteMany({ where: { id: otherCompanyId } });
+    await prisma.branch.deleteMany({ where: { companyId: stringToBigint(otherCompanyId) } });
+    await prisma.company.deleteMany({ where: { id: stringToBigint(otherCompanyId) } });
     await cleanupTestToken();
   });
 
@@ -228,7 +229,7 @@ describe("cross-tenant validation", () => {
     await expect(
       tool!.execute(
         { from: "2026-07-01", to: "2026-07-31", branchId: otherBranchId },
-        { token: { tokenId: testToken.tokenId, companyId: testToken.companyId, scopes: ["read"] }, companyId: testToken.companyId }
+        { token: { tokenId: testToken.tokenId, companyId: testToken.companyId, scopes: ["read"] }, companyId: stringToBigint(testToken.companyId) }
       )
     ).rejects.toThrow(/Sucursal no encontrada/);
   });

@@ -5,6 +5,7 @@ import { requireSession } from "@/lib/server-auth";
 import { isSuperAdmin } from "@/lib/super-admin";
 import { createAuditLog } from "@/lib/audit";
 import { getFaceQuotaStatus } from "@/lib/subscription";
+import { stringToBigint } from "@/lib/bigint";
 
 const subscriptionSchema = z.object({
   subscriptionExpiresAt: z.string().datetime().nullable(),
@@ -41,7 +42,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   }
 
   const existing = await prisma.company.findUnique({
-    where: { id: params.id },
+    where: { id: stringToBigint(params.id) },
     select: {
       id: true,
       name: true,
@@ -55,7 +56,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   }
 
   const company = await prisma.company.update({
-    where: { id: params.id },
+    where: { id: stringToBigint(params.id) },
     data: {
       subscriptionExpiresAt: parsed.data.subscriptionExpiresAt
         ? new Date(parsed.data.subscriptionExpiresAt)

@@ -8,10 +8,11 @@ import {
   clampFaceMatchThreshold,
   DEFAULT_FACE_MATCH_THRESHOLD,
 } from "@/lib/face-match-threshold";
+import { stringToBigint } from "@/lib/bigint";
 
 const searchFaceSchema = z.object({
   descriptor: z.array(z.number()).length(128),
-  branchId: z.string().cuid().optional(),
+  branchId: z.coerce.bigint().positive().optional(),
 });
 
 interface FaceSearchRow {
@@ -24,7 +25,7 @@ interface FaceSearchRow {
 }
 
 async function resolveCompanyThreshold(
-  companyId: string | null | undefined
+  companyId: bigint | null | undefined
 ): Promise<number> {
   if (!companyId) return DEFAULT_FACE_MATCH_THRESHOLD;
   const company = await prisma.company.findUnique({
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
   }
 
   const companyFilter = getCompanyFilter(session);
-  const threshold = await resolveCompanyThreshold(session.companyId);
+  const threshold = await resolveCompanyThreshold(session.companyId ? stringToBigint(session.companyId) : null);
 
   const companyWhere = companyFilter.companyId
     ? Prisma.sql`AND e."companyId" = ${companyFilter.companyId}`
@@ -72,11 +73,11 @@ export async function POST(request: NextRequest) {
 
   const matches = await prisma.$queryRaw<FaceSearchRow[]>`
     SELECT
-      e."id" AS "employeeId",
+      e."id"::text AS "employeeId",
       e."fullName",
       p."name" AS "position",
       e."photo",
-      e."branchId",
+      e."branchId"::text,
       (e."faceEmbedding" <-> ${queryVector}::vector) AS "distance"
     FROM "Employee" e
     LEFT JOIN "Position" p ON p."id" = e."positionId"

@@ -125,7 +125,11 @@ export function SettingsClient({
     },
   });
 
-  const opsForm = useForm<AttendanceOpsForm>({
+  const opsForm = useForm<
+    z.input<typeof attendanceOpsSchema>,
+    unknown,
+    AttendanceOpsForm
+  >({
     resolver: zodResolver(attendanceOpsSchema),
     defaultValues: {
       lateToleranceMinutes: company?.lateToleranceMinutes ?? 10,
@@ -411,6 +415,7 @@ export function SettingsClient({
                               step={1}
                               disabled={!canManageCompany}
                               {...field}
+                              value={field.value as number}
                             />
                           </FormControl>
                           <FormMessage />
@@ -436,6 +441,7 @@ export function SettingsClient({
                               step={0.05}
                               disabled={!canManageCompany}
                               {...field}
+                              value={field.value as number}
                             />
                           </FormControl>
                           <FormMessage />
@@ -460,6 +466,7 @@ export function SettingsClient({
                               step={1}
                               disabled={!canManageCompany}
                               {...field}
+                              value={field.value as number}
                             />
                           </FormControl>
                           <FormMessage />

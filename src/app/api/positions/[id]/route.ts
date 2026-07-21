@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession, getCompanyFilter } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { stringToBigint } from "@/lib/bigint";
 
 const updatePositionSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -11,14 +12,14 @@ const updatePositionSchema = z.object({
 
 type RouteParams = { params: { id: string } };
 
-async function getPositionIfAllowed(id: string, session: Awaited<ReturnType<typeof requireSession>>) {
+async function getPositionIfAllowed(id: bigint, session: Awaited<ReturnType<typeof requireSession>>) {
   const _companyFilter = getCompanyFilter(session);
   const position = await prisma.position.findUnique({
     where: { id },
   });
 
   if (!position) return null;
-  if (session.role !== "SAAS_SUPER_ADMIN" && position.companyId !== session.companyId) {
+  if (session.role !== "SAAS_SUPER_ADMIN" && position.companyId.toString() !== session.companyId) {
     return null;
   }
   return position;
@@ -33,7 +34,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   }
 
   try {
-    const position = await getPositionIfAllowed(params.id, session);
+    const position = await getPositionIfAllowed(stringToBigint(params.id), session);
     if (!position) {
       return NextResponse.json({ error: "Cargo no encontrado" }, { status: 404 });
     }
@@ -71,7 +72,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     );
   }
 
-  const position = await getPositionIfAllowed(params.id, session);
+  const position = await getPositionIfAllowed(stringToBigint(params.id), session);
   if (!position) {
     return NextResponse.json({ error: "Cargo no encontrado" }, { status: 404 });
   }
@@ -79,7 +80,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
     const oldValues = { name: position.name, active: position.active };
     const updated = await prisma.position.update({
-      where: { id: params.id },
+      where: { id: stringToBigint(params.id) },
       data: parsed.data,
     });
     await createAuditLog({
@@ -117,14 +118,14 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const position = await getPositionIfAllowed(params.id, session);
+  const position = await getPositionIfAllowed(stringToBigint(params.id), session);
   if (!position) {
     return NextResponse.json({ error: "Cargo no encontrado" }, { status: 404 });
   }
 
   try {
     await prisma.position.update({
-      where: { id: params.id },
+      where: { id: stringToBigint(params.id) },
       data: { active: false },
     });
     await createAuditLog({

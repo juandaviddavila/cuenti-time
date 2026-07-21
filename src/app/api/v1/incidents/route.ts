@@ -6,6 +6,7 @@ import {
 } from "@/lib/api-token-auth";
 import { prisma } from "@/lib/prisma";
 import { parseLocalDateParam } from "@/lib/hr/local-date";
+import { stringToBigint } from "@/lib/bigint";
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiToken(request, "read");
@@ -16,12 +17,15 @@ export async function GET(request: NextRequest) {
   const to = searchParams.get("to");
   const date = searchParams.get("date");
   const employeeId = searchParams.get("employeeId") ?? undefined;
+  const employeeIdBigInt = employeeId ? stringToBigint(employeeId) : undefined;
   const branchId = searchParams.get("branchId") ?? undefined;
+  const branchIdBigInt = branchId ? stringToBigint(branchId) : undefined;
   const incidentTypeId = searchParams.get("incidentTypeId") ?? undefined;
+  const incidentTypeIdBigInt = incidentTypeId ? stringToBigint(incidentTypeId) : undefined;
 
   if (employeeId) {
     const employee = await prisma.employee.findFirst({
-      where: { id: employeeId, companyId: auth.companyId },
+      where: { id: employeeIdBigInt, companyId: stringToBigint(auth.companyId) },
       select: { id: true },
     });
     if (!employee) {
@@ -30,7 +34,7 @@ export async function GET(request: NextRequest) {
   }
   if (branchId) {
     const branch = await prisma.branch.findFirst({
-      where: { id: branchId, companyId: auth.companyId },
+      where: { id: branchIdBigInt, companyId: stringToBigint(auth.companyId) },
       select: { id: true },
     });
     if (!branch) {
@@ -39,7 +43,7 @@ export async function GET(request: NextRequest) {
   }
   if (incidentTypeId) {
     const type = await prisma.incidentType.findFirst({
-      where: { id: incidentTypeId, companyId: auth.companyId },
+      where: { id: incidentTypeIdBigInt, companyId: stringToBigint(auth.companyId) },
       select: { id: true },
     });
     if (!type) {
@@ -59,11 +63,10 @@ export async function GET(request: NextRequest) {
   }
 
   const incidents = await prisma.incident.findMany({
-    where: {
-      companyId: auth.companyId,
-      ...(employeeId ? { employeeId } : {}),
-      ...(branchId ? { branchId } : {}),
-      ...(incidentTypeId ? { incidentTypeId } : {}),
+    where: { companyId: stringToBigint(auth.companyId),
+      ...(employeeId ? { employeeId: employeeIdBigInt } : {}),
+      ...(branchId ? { branchId: branchIdBigInt } : {}),
+      ...(incidentTypeId ? { incidentTypeId: incidentTypeIdBigInt } : {}),
       ...(dateFilter ? { date: dateFilter } : {}),
     },
     include: {

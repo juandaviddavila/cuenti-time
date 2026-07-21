@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "@/lib/server-auth";
+import { stringToBigint, serializeRecord } from "@/lib/bigint";
 
 export async function GET() {
   const session = await getServerSession();
@@ -9,7 +10,7 @@ export async function GET() {
   }
 
   const user = await prisma.user.findUnique({
-    where: { id: session.userId },
+    where: { id: stringToBigint(session.userId) },
     select: {
       id: true,
       name: true,
@@ -34,7 +35,7 @@ export async function GET() {
   let companyName: string | null = null;
   if (activeCompanyId) {
     const company = await prisma.company.findUnique({
-      where: { id: activeCompanyId },
+      where: { id: stringToBigint(activeCompanyId) },
       select: { name: true },
     });
     companyName = company?.name ?? null;
@@ -49,13 +50,13 @@ export async function GET() {
 
   if (session.isImpersonating && session.impersonatorUserId && session.companyId) {
     const impersonator = await prisma.user.findUnique({
-      where: { id: session.impersonatorUserId },
+       where: { id: stringToBigint(session.impersonatorUserId) },
       select: { name: true },
     });
 
     if (companyName && impersonator) {
       impersonation = {
-        companyId: session.companyId,
+        companyId: session.companyId.toString(),
         companyName,
         impersonatorUserId: session.impersonatorUserId,
         impersonatorName: impersonator.name,
@@ -63,7 +64,7 @@ export async function GET() {
     }
   }
 
-  return NextResponse.json({
+  return NextResponse.json(serializeRecord({
     user: {
       ...user,
       role: session.role,
@@ -73,5 +74,5 @@ export async function GET() {
     },
     isImpersonating: session.isImpersonating,
     impersonation,
-  });
+  }));
 }

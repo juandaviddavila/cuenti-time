@@ -6,6 +6,7 @@ import {
 } from "@/lib/api-token-auth";
 import { prisma } from "@/lib/prisma";
 import { parseLocalDateParam } from "@/lib/hr/local-date";
+import { stringToBigint } from "@/lib/bigint";
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiToken(request, "read");
@@ -17,12 +18,11 @@ export async function GET(request: NextRequest) {
 
   const [employees, records] = await Promise.all([
     prisma.employee.findMany({
-      where: { companyId: auth.companyId, status: "ACTIVE" },
+      where: { companyId: stringToBigint(auth.companyId), status: "ACTIVE" },
       select: { id: true, fullName: true, branchId: true },
     }),
     prisma.attendanceRecord.findMany({
-      where: {
-        companyId: auth.companyId,
+      where: { companyId: stringToBigint(auth.companyId),
         recordedAt: { gte: startOfDay(date), lte: endOfDay(date) },
       },
       orderBy: { recordedAt: "asc" },

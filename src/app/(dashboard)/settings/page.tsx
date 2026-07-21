@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession, getUserPermissionFields } from "@/lib/server-auth";
 import { canManageIntegrations } from "@/lib/user-permissions";
 import { SettingsClient } from "./settings-client";
+import { stringToBigint, bigintToString } from "@/lib/bigint";
 
 export default async function SettingsPage() {
   const session = await getServerSession();
@@ -15,7 +16,7 @@ export default async function SettingsPage() {
 
   const company = session.companyId
     ? await prisma.company.findUnique({
-        where: { id: session.companyId },
+         where: { id: stringToBigint(session.companyId) },
         select: {
           id: true,
           name: true,
@@ -44,7 +45,8 @@ export default async function SettingsPage() {
       company={
         company
           ? {
-              ...company,
+               ...company,
+               id: bigintToString(company.id),
               subscriptionExpiresAt: company.subscriptionExpiresAt?.toISOString() ?? null,
             }
           : null

@@ -5,6 +5,7 @@ import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
 import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/server-auth";
 import { hasExpiredCompanySubscription } from "@/lib/subscription";
+import { stringToBigint } from "@/lib/bigint";
 
 export default async function DashboardLayout({
   children,
@@ -17,7 +18,7 @@ export default async function DashboardLayout({
     session?.companyId &&
     session.role !== "SAAS_SUPER_ADMIN" &&
     !session.isImpersonating &&
-    await hasExpiredCompanySubscription(session.companyId)
+     await hasExpiredCompanySubscription(stringToBigint(session.companyId))
   ) {
     redirect("/subscription-expired");
   }

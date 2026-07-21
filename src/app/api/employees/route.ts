@@ -4,19 +4,20 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireSession, getCompanyFilter } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
-import { canRegisterAdditionalFace, requireActiveCompanySubscription } from "@/lib/subscription";
+import { canRegisterAdditionalFace, canAddEmployee, requireActiveCompanySubscription } from "@/lib/subscription";
 import { scheduleWebhookEvent } from "@/lib/webhooks/dispatch";
+import { stringToBigint } from "@/lib/bigint";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const createEmployeeSchema = z.object({
-  companyId: z.string().cuid(),
-  branchId: z.string().cuid(),
+  companyId: z.coerce.bigint().positive(),
+  branchId: z.coerce.bigint().positive(),
   fullName: z.string().min(1).max(200),
   documentType: z.enum(["CC", "CE", "PASSPORT", "NIT", "OTHER"]).default("CC"),
   documentNumber: z.string().min(1).max(50),
   // Puede ser cuid o id fijo del seed/registro (p.ej. pos-general-<companyId>)
-  positionId: z.string().min(1).max(100).optional().nullable().or(z.literal("").transform(() => null)),
+  positionId: z.coerce.bigint().positive().nullish().or(z.literal("").transform(() => null)),
   email: z.string().email().max(254).optional().or(z.literal("").transform(() => undefined)),
   phone: z.string().max(20).optional().or(z.literal("").transform(() => undefined)),
   photo: z
@@ -48,6 +49,7 @@ export async function GET(request: NextRequest) {
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
   const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get("pageSize") ?? "20")));
   const branchId = searchParams.get("branchId") ?? undefined;
+  const branchIdBigInt = branchId ? stringToBigint(branchId) : undefined;
   const status = searchParams.get("status") ?? undefined;
   const faceRegisteredParam = searchParams.get("faceRegistered");
   const search = searchParams.get("search") ?? undefined;
@@ -63,7 +65,7 @@ export async function GET(request: NextRequest) {
 
   const where: Prisma.EmployeeWhereInput = {
     ...companyFilter,
-    ...(branchId ? { branchId } : {}),
+    ...(branchId ? { branchId: branchIdBigInt } : {}),
     ...(status === "ACTIVE" || status === "INACTIVE" ? { status } : {}),
     ...(faceRegisteredFilter !== undefined ? { faceRegistered: faceRegisteredFilter } : {}),
     ...(search
@@ -144,7 +146,7 @@ export async function POST(request: NextRequest) {
   const { companyId, branchId, positionId } = parsed.data;
 
   // Non-platform roles can only create employees in their own company
-  if (session.role !== "SAAS_SUPER_ADMIN" && session.companyId !== companyId) {
+  if (session.role !== "SAAS_SUPER_ADMIN" && session.companyId !== companyId.toString()) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -153,6 +155,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { error: subscription.error, code: subscription.code },
       { status: subscription.status }
+    );
+  }
+
+  const slotLimit = await canAddEmployee(companyId);
+  if (!slotLimit.ok) {
+    return NextResponse.json(
+      { error: slotLimit.error, code: slotLimit.code },
+      { status: slotLimit.status }
     );
   }
 

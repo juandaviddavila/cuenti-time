@@ -4,6 +4,7 @@ import {
   requireApiToken,
 } from "@/lib/api-token-auth";
 import { prisma } from "@/lib/prisma";
+import { stringToBigint } from "@/lib/bigint";
 
 type RouteParams = { params: { id: string } };
 
@@ -13,7 +14,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   // findFirst + companyId: evita fuga si el id existe en otra empresa.
   const employee = await prisma.employee.findFirst({
-    where: { id: params.id, companyId: auth.companyId },
+    where: { id: stringToBigint(params.id), companyId: stringToBigint(auth.companyId) },
     select: {
       id: true,
       fullName: true,

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { rateLimit } from "@/lib/rate-limit";
 import { sendEmail, verificationCodeEmailHtml } from "@/lib/email";
+import { getBillingConfig } from "@/lib/billing/config";
 import {
   generateVerificationCode,
   getVerificationExpiry,
@@ -78,21 +79,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const billingConfig = await getBillingConfig();
     const hashedPassword = await bcrypt.hash(password, 12);
-    const trialExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const verificationCode = generateVerificationCode();
     const verificationToken = await hashVerificationCode(verificationCode);
     const verificationExpiresAt = getVerificationExpiry();
 
-    const result = await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       const company = await tx.company.create({
         data: {
           name: companyLegalName,
           legalName: companyLegalName,
           taxId: companyTaxId,
           email,
-          subscriptionExpiresAt: trialExpiresAt,
-          maxEmployees: 10,
+          plan: "free",
+          subscriptionStatus: "none",
+          subscriptionExpiresAt: null,
+          maxEmployees: billingConfig.freeEmployeeLimit,
         },
       });
 
@@ -130,8 +133,13 @@ export async function POST(request: NextRequest) {
           userId: user.id,
           action: "CREATE",
           entity: "COMPANY",
-          entityId: company.id,
-          newValues: { name: companyLegalName, email, trialExpiresAt },
+          entityId: company.id.toString(),
+          newValues: {
+            name: companyLegalName,
+            email,
+            plan: "free",
+            maxEmployees: billingConfig.freeEmployeeLimit,
+          },
         },
       });
 
@@ -150,7 +158,8 @@ export async function POST(request: NextRequest) {
         requiresEmailVerification: true,
         email,
         ...(process.env.NODE_ENV === "development" ? { devCode: verificationCode } : {}),
-        trialExpiresAt: result.company.subscriptionExpiresAt?.toISOString() ?? null,
+        plan: "free",
+        maxEmployees: billingConfig.freeEmployeeLimit,
       },
       { status: 201 }
     );

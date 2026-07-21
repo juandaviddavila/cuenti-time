@@ -9,6 +9,7 @@ import {
   setAuthCookies,
 } from "@/lib/session-tokens";
 import { resolveEffectiveRole } from "@/lib/super-admin-access";
+import { bigintToString, stringToBigint } from "@/lib/bigint";
 
 export async function POST(request: NextRequest) {
   const refreshToken = request.cookies.get("refresh-token")?.value;
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest) {
     }
 
     const user = await prisma.user.findUnique({
-      where: { id: tokenPayload.userId },
+      where: { id: stringToBigint(tokenPayload.userId) },
       select: {
         id: true,
         companyId: true,
@@ -41,8 +42,8 @@ export async function POST(request: NextRequest) {
     }
 
     const refreshedPayload = {
-      userId: user.id,
-      companyId: user.companyId,
+      userId: bigintToString(user.id),
+      companyId: user.companyId ? bigintToString(user.companyId) : null,
       role: resolveEffectiveRole(
         user.email,
         user.role,

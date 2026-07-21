@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { stringToBigint } from "@/lib/bigint";
 
 const updateIncidentTypeSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -14,17 +15,17 @@ const updateIncidentTypeSchema = z.object({
 
 type RouteParams = { params: { id: string } };
 
-async function getIncidentTypeIfAllowed(id: string, session: Awaited<ReturnType<typeof requireSession>>) {
+async function getIncidentTypeIfAllowed(id: bigint, session: Awaited<ReturnType<typeof requireSession>>) {
   const type = await prisma.incidentType.findUnique({ where: { id } });
   if (!type) return null;
-  if (session.role !== "SAAS_SUPER_ADMIN" && type.companyId !== session.companyId) return null;
+  if (session.role !== "SAAS_SUPER_ADMIN" && type.companyId.toString() !== session.companyId) return null;
   return type;
 }
 
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   let session;
   try { session = await requireSession(); } catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401 }); }
-  const type = await getIncidentTypeIfAllowed(params.id, session);
+  const type = await getIncidentTypeIfAllowed(stringToBigint(params.id), session);
   if (!type) return NextResponse.json({ error: "Tipo no encontrado" }, { status: 404 });
   return NextResponse.json(type);
 }
@@ -39,10 +40,10 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   try { body = await request.json(); } catch { return NextResponse.json({ error: "Cuerpo inválido" }, { status: 400 }); }
   const parsed = updateIncidentTypeSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors }, { status: 400 });
-  const type = await getIncidentTypeIfAllowed(params.id, session);
+  const type = await getIncidentTypeIfAllowed(stringToBigint(params.id), session);
   if (!type) return NextResponse.json({ error: "Tipo no encontrado" }, { status: 404 });
   try {
-    const updated = await prisma.incidentType.update({ where: { id: params.id }, data: parsed.data });
+    const updated = await prisma.incidentType.update({ where: { id: stringToBigint(params.id) }, data: parsed.data });
     await createAuditLog({
       request,
       session,
@@ -69,10 +70,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   if (session.role !== "SAAS_SUPER_ADMIN" && session.role !== "COMPANY_ADMIN") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const type = await getIncidentTypeIfAllowed(params.id, session);
+  const type = await getIncidentTypeIfAllowed(stringToBigint(params.id), session);
   if (!type) return NextResponse.json({ error: "Tipo no encontrado" }, { status: 404 });
   try {
-    await prisma.incidentType.update({ where: { id: params.id }, data: { active: false } });
+    await prisma.incidentType.update({ where: { id: stringToBigint(params.id) }, data: { active: false } });
     await createAuditLog({
       request,
       session,

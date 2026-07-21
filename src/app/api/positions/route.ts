@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession, getCompanyFilter } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { stringToBigint } from "@/lib/bigint";
 
 const positionSchema = z.object({
   name: z.string().min(1).max(100),
@@ -74,9 +75,10 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const companyIdBigInt = stringToBigint(companyId);
     const position = await prisma.position.create({
       data: {
-        companyId,
+        companyId: companyIdBigInt,
         name: parsed.data.name,
         active: parsed.data.active,
       },
@@ -87,7 +89,7 @@ export async function POST(request: NextRequest) {
       action: "CREATE",
       entity: "POSITION",
       entityId: position.id,
-      companyId,
+      companyId: companyIdBigInt,
       newValues: { name: position.name, active: position.active },
     });
     return NextResponse.json(position, { status: 201 });

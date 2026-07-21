@@ -10,6 +10,7 @@ import type { HrReportKind } from "@/lib/hr/day-evaluation";
 import { parseLocalDateParam } from "@/lib/hr/local-date";
 import type { ServerSession } from "@/lib/server-auth";
 import { prisma } from "@/lib/prisma";
+import { stringToBigint } from "@/lib/bigint";
 
 const reportSchema = z.enum([
   "absences",
@@ -55,12 +56,15 @@ export async function GET(request: NextRequest) {
   }
 
   const branchId = searchParams.get("branchId") ?? undefined;
+  const branchIdBigInt = branchId ? stringToBigint(branchId) : undefined;
   const employeeId = searchParams.get("employeeId") ?? undefined;
+  const employeeIdBigInt = employeeId ? stringToBigint(employeeId) : undefined;
   const shiftId = searchParams.get("shiftId") ?? undefined;
+  const shiftIdBigInt = shiftId ? stringToBigint(shiftId) : undefined;
 
   if (branchId) {
     const ok = await prisma.branch.findFirst({
-      where: { id: branchId, companyId: auth.companyId },
+      where: { id: branchIdBigInt, companyId: stringToBigint(auth.companyId) },
       select: { id: true },
     });
     if (!ok) {
@@ -69,7 +73,7 @@ export async function GET(request: NextRequest) {
   }
   if (employeeId) {
     const ok = await prisma.employee.findFirst({
-      where: { id: employeeId, companyId: auth.companyId },
+      where: { id: employeeIdBigInt, companyId: stringToBigint(auth.companyId) },
       select: { id: true },
     });
     if (!ok) {
@@ -78,7 +82,7 @@ export async function GET(request: NextRequest) {
   }
   if (shiftId) {
     const ok = await prisma.shift.findFirst({
-      where: { id: shiftId, companyId: auth.companyId },
+      where: { id: shiftIdBigInt, companyId: stringToBigint(auth.companyId) },
       select: { id: true },
     });
     if (!ok) {
@@ -87,7 +91,7 @@ export async function GET(request: NextRequest) {
   }
 
   const apiSession: ServerSession = {
-    userId: `api-token:${auth.tokenId}`,
+    userId: auth.tokenId,
     companyId: auth.companyId,
     role: "COMPANY_ADMIN",
     email: "api@token.local",

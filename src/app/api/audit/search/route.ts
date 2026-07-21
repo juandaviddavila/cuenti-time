@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireSession, getCompanyFilter } from "@/lib/server-auth";
+import { bigintToString } from "@/lib/bigint";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -13,9 +14,9 @@ const auditSearchSchema = z.object({
   to: z.string().regex(ISO_DATE_REGEX, "Formato de fecha inválido").optional(),
   action: z.string().optional(),
   entity: z.string().optional(),
-  branchId: z.string().cuid().optional(),
+  branchId: z.coerce.bigint().positive().optional(),
   employeeId: z.string().optional(), // single id or comma-separated list
-  companyId: z.string().cuid().optional(),
+  companyId: z.coerce.bigint().positive().optional(),
   search: z.string().max(200).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
@@ -80,7 +81,7 @@ export async function GET(request: NextRequest) {
 
   const entityIdFilters: Prisma.AuditLogWhereInput[] = [];
   if (branchId) {
-    entityIdFilters.push({ entity: "BRANCH", entityId: branchId });
+    entityIdFilters.push({ entity: "BRANCH", entityId: bigintToString(branchId) });
   }
   if (employeeIds.length === 1) {
     entityIdFilters.push({ entity: "EMPLOYEE", entityId: employeeIds[0] });

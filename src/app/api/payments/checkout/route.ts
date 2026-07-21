@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
 
   await prisma.payment.create({
     data: {
-      companyId: session.companyId,
+      companyId: BigInt(session.companyId),
       wompiReference: reference,
       amount: amountInCents,
       billingCycle,

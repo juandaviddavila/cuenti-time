@@ -126,7 +126,7 @@ const createUserSchema = z.object({
     "REPORT_VIEWER",
     "DEVELOPER",
   ] as const),
-  branchId: z.string().cuid().optional(),
+  branchId: z.string().regex(/^\d+$/, "ID de sucursal inválido").optional(),
   bypassGeofence: z.boolean().default(false),
   canManageIntegrations: z.boolean().default(false),
 });
@@ -156,7 +156,11 @@ export function UsersClient({
     currentUserRole === "SAAS_SUPER_ADMIN" ||
     currentUserRole === "COMPANY_ADMIN";
 
-  const form = useForm<CreateUserFormValues>({
+  const form = useForm<
+    z.input<typeof createUserSchema>,
+    unknown,
+    CreateUserFormValues
+  >({
     resolver: zodResolver(createUserSchema),
     defaultValues: {
       name: "",

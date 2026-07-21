@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { scheduleWebhookEvent } from "@/lib/webhooks/dispatch";
+import { stringToBigint } from "@/lib/bigint";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -34,7 +35,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id } = params;
+  const id = stringToBigint(params.id);
 
   try {
     const branch = await prisma.branch.findUnique({
@@ -52,7 +53,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     // Verify tenant isolation
     if (
       session.role !== "SAAS_SUPER_ADMIN" &&
-      branch.companyId !== session.companyId
+      branch.companyId.toString() !== session.companyId
     ) {
       return NextResponse.json({ error: "Sucursal no encontrada" }, { status: 404 });
     }
@@ -78,7 +79,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { id } = params;
+  const id = stringToBigint(params.id);
 
   const existing = await prisma.branch.findUnique({
     where: { id },
@@ -91,7 +92,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   // Verify tenant isolation
   if (
     session.role !== "SAAS_SUPER_ADMIN" &&
-    existing.companyId !== session.companyId
+    existing.companyId.toString() !== session.companyId
   ) {
     return NextResponse.json({ error: "Sucursal no encontrada" }, { status: 404 });
   }
@@ -176,7 +177,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { id } = params;
+  const id = stringToBigint(params.id);
 
   const existing = await prisma.branch.findUnique({
     where: { id },
@@ -189,7 +190,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   // Verify tenant isolation
   if (
     session.role !== "SAAS_SUPER_ADMIN" &&
-    existing.companyId !== session.companyId
+    existing.companyId.toString() !== session.companyId
   ) {
     return NextResponse.json({ error: "Sucursal no encontrada" }, { status: 404 });
   }

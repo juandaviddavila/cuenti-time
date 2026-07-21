@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { stringToBigint } from "@/lib/bigint";
 
 let testCompanyId: string | null = null;
 let testTokenId: string | null = null;
@@ -19,7 +20,7 @@ export async function createTestToken(): Promise<TestToken> {
       email: "mcp-test@cuenti.co",
     },
   });
-  testCompanyId = company.id;
+  testCompanyId = company.id.toString();
 
   const rawToken = `cuenti_${Buffer.from(crypto.randomUUID().replace(/-/g, "")).toString("hex").slice(0, 16)}`;
   const hashed = await bcrypt.hash(rawToken, 12);
@@ -34,18 +35,18 @@ export async function createTestToken(): Promise<TestToken> {
       active: true,
     },
   });
-  testTokenId = token.id;
+  testTokenId = token.id.toString();
 
-  return { rawToken, companyId: company.id, tokenId: token.id };
+  return { rawToken, companyId: company.id.toString(), tokenId: token.id.toString() };
 }
 
 export async function cleanupTestToken(): Promise<void> {
   if (testTokenId) {
-    await prisma.apiToken.deleteMany({ where: { id: testTokenId } });
+    await prisma.apiToken.deleteMany({ where: { id: stringToBigint(testTokenId) } });
     testTokenId = null;
   }
   if (testCompanyId) {
-    await prisma.company.deleteMany({ where: { id: testCompanyId } });
+    await prisma.company.deleteMany({ where: { id: stringToBigint(testCompanyId) } });
     testCompanyId = null;
   }
 }

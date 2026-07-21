@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession, requireIntegrationAccess } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { stringToBigint, serializeRecord } from "@/lib/bigint";
 
 const updateTokenSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -12,13 +13,13 @@ const updateTokenSchema = z.object({
 type RouteParams = { params: { id: string } };
 
 async function getTokenIfAllowed(
-  id: string,
+  id: bigint,
   session: Awaited<ReturnType<typeof requireSession>>
 ) {
   // Multi-tenant estricto: el token solo es visible si pertenece a la empresa de la sesión.
   if (!session.companyId) return null;
   return prisma.apiToken.findFirst({
-    where: { id, companyId: session.companyId },
+    where: { id, companyId: stringToBigint(session.companyId) },
   });
 }
 
@@ -35,11 +36,11 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   try { body = await request.json(); } catch { return NextResponse.json({ error: "Cuerpo inválido" }, { status: 400 }); }
   const parsed = updateTokenSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors }, { status: 400 });
-  const token = await getTokenIfAllowed(params.id, session);
+  const token = await getTokenIfAllowed(stringToBigint(params.id), session);
   if (!token) return NextResponse.json({ error: "Token no encontrado" }, { status: 404 });
   try {
     const updated = await prisma.apiToken.update({
-      where: { id: params.id },
+      where: { id: stringToBigint(params.id) },
       data: parsed.data,
       select: {
         id: true,
@@ -62,7 +63,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       newValues: { name: updated.name, active: updated.active },
     });
     const { companyId: _companyId, ...safe } = updated;
-    return NextResponse.json(safe);
+    return NextResponse.json(serializeRecord(safe));
   } catch (err) {
     console.error("PUT /api/api-tokens/[id] error:", err);
     return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });
@@ -78,11 +79,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     if (err instanceof Response) return err;
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const token = await getTokenIfAllowed(params.id, session);
+  const token = await getTokenIfAllowed(stringToBigint(params.id), session);
   if (!token) return NextResponse.json({ error: "Token no encontrado" }, { status: 404 });
   try {
     // Borrado definitivo. Para pausar y recuperar use PUT { active: false|true }.
-    await prisma.apiToken.delete({ where: { id: params.id } });
+    await prisma.apiToken.delete({ where: { id: stringToBigint(params.id) } });
     await createAuditLog({
       request,
       session,

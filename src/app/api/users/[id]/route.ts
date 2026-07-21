@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { resolveEffectiveRole } from "@/lib/super-admin-access";
+import { stringToBigint } from "@/lib/bigint";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -23,7 +24,7 @@ const updateUserSchema = z.object({
     .optional(),
   status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
   avatar: z.string().url().optional(),
-  branchId: z.string().cuid().optional().nullable(),
+  branchId: z.coerce.bigint().positive().nullish(),
   bypassGeofence: z.boolean().optional(),
   canManageIntegrations: z.boolean().optional(),
   // Password changes are intentionally NOT allowed here (use a dedicated endpoint)
@@ -41,7 +42,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id } = params;
+  const id = stringToBigint(params.id);
 
   try {
     const user = await prisma.user.findUnique({
@@ -70,7 +71,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     // Verify tenant isolation (super admin can see all)
     if (
       session.role !== "SAAS_SUPER_ADMIN" &&
-      user.companyId !== session.companyId
+      user.companyId?.toString() !== session.companyId
     ) {
       return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
     }
@@ -99,7 +100,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { id } = params;
+  const id = stringToBigint(params.id);
 
   const existing = await prisma.user.findUnique({
     where: { id },
@@ -113,7 +114,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   // Verify tenant isolation
   if (
     session.role !== "SAAS_SUPER_ADMIN" &&
-    existing.companyId !== session.companyId
+    existing.companyId?.toString() !== session.companyId
   ) {
     return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
   }
@@ -203,10 +204,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { id } = params;
+  const id = stringToBigint(params.id);
 
   // Prevent self-deactivation
-  if (session.userId === id) {
+  if (session.userId === id.toString()) {
     return NextResponse.json(
       { error: "No puedes desactivar tu propia cuenta" },
       { status: 422 }
@@ -225,7 +226,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   // Verify tenant isolation
   if (
     session.role !== "SAAS_SUPER_ADMIN" &&
-    existing.companyId !== session.companyId
+    existing.companyId?.toString() !== session.companyId
   ) {
     return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
   }

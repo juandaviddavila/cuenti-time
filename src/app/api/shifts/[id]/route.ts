@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { stringToBigint } from "@/lib/bigint";
 
 const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -27,10 +28,10 @@ const updateShiftSchema = z.object({
 
 type RouteParams = { params: { id: string } };
 
-async function getShiftIfAllowed(id: string, session: Awaited<ReturnType<typeof requireSession>>) {
+async function getShiftIfAllowed(id: bigint, session: Awaited<ReturnType<typeof requireSession>>) {
   const shift = await prisma.shift.findUnique({ where: { id } });
   if (!shift) return null;
-  if (session.role !== "SAAS_SUPER_ADMIN" && shift.companyId !== session.companyId) return null;
+  if (session.role !== "SAAS_SUPER_ADMIN" && shift.companyId.toString() !== session.companyId) return null;
   return shift;
 }
 
@@ -38,7 +39,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   let session;
   try { session = await requireSession(); } catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401 }); }
   try {
-    const shift = await getShiftIfAllowed(params.id, session);
+    const shift = await getShiftIfAllowed(stringToBigint(params.id), session);
     if (!shift) return NextResponse.json({ error: "Turno no encontrado" }, { status: 404 });
     return NextResponse.json(shift);
   } catch (err) {
@@ -57,11 +58,11 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   try { body = await request.json(); } catch { return NextResponse.json({ error: "Cuerpo inválido" }, { status: 400 }); }
   const parsed = updateShiftSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors }, { status: 400 });
-  const shift = await getShiftIfAllowed(params.id, session);
+  const shift = await getShiftIfAllowed(stringToBigint(params.id), session);
   if (!shift) return NextResponse.json({ error: "Turno no encontrado" }, { status: 404 });
   try {
     const oldValues = { name: shift.name, active: shift.active };
-    const updated = await prisma.shift.update({ where: { id: params.id }, data: parsed.data });
+    const updated = await prisma.shift.update({ where: { id: stringToBigint(params.id) }, data: parsed.data });
     await createAuditLog({
       request,
       session,
@@ -85,10 +86,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   if (session.role !== "SAAS_SUPER_ADMIN" && session.role !== "COMPANY_ADMIN") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const shift = await getShiftIfAllowed(params.id, session);
+  const shift = await getShiftIfAllowed(stringToBigint(params.id), session);
   if (!shift) return NextResponse.json({ error: "Turno no encontrado" }, { status: 404 });
   try {
-    await prisma.shift.update({ where: { id: params.id }, data: { active: false } });
+    await prisma.shift.update({ where: { id: stringToBigint(params.id) }, data: { active: false } });
     await createAuditLog({
       request,
       session,

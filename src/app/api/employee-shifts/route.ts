@@ -3,10 +3,11 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession, getCompanyFilter } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { stringToBigint } from "@/lib/bigint";
 
 const employeeShiftSchema = z.object({
-  employeeId: z.string().cuid(),
-  shiftId: z.string().cuid(),
+  employeeId: z.coerce.bigint().positive(),
+  shiftId: z.coerce.bigint().positive(),
   startDate: z.string().datetime(),
   endDate: z.string().datetime().optional().nullable(),
 });
@@ -18,13 +19,14 @@ export async function GET(request: NextRequest) {
   const companyFilter = getCompanyFilter(session);
   const { searchParams } = new URL(request.url);
   const employeeId = searchParams.get("employeeId") ?? undefined;
+  const employeeIdBigInt = employeeId ? stringToBigint(employeeId) : undefined;
   const activeOnly = searchParams.get("activeOnly") === "true";
   const now = new Date();
 
   try {
     const assignments = await prisma.employeeShift.findMany({
       where: {
-        ...(employeeId ? { employeeId } : {}),
+        ...(employeeId ? { employeeId: employeeIdBigInt } : {}),
         ...(activeOnly ? { startDate: { lte: now }, OR: [{ endDate: null }, { endDate: { gte: now } }] } : {}),
         employee: { ...companyFilter },
       },
@@ -55,7 +57,7 @@ export async function POST(request: NextRequest) {
   const { employeeId, shiftId, startDate, endDate } = parsed.data;
   const employee = await prisma.employee.findUnique({ where: { id: employeeId }, select: { companyId: true } });
   if (!employee) return NextResponse.json({ error: "Empleado no encontrado" }, { status: 404 });
-  if (session.role !== "SAAS_SUPER_ADMIN" && employee.companyId !== session.companyId) {
+  if (session.role !== "SAAS_SUPER_ADMIN" && employee.companyId.toString() !== session.companyId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { stringToBigint } from "@/lib/bigint";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -42,7 +43,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id } = params;
+  const id = stringToBigint(params.id);
 
   try {
     const company = await prisma.company.findUnique({
@@ -57,7 +58,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     }
 
     // Non-super-admin can only access their own company
-    if (session.role !== "SAAS_SUPER_ADMIN" && company.id !== session.companyId) {
+    if (session.role !== "SAAS_SUPER_ADMIN" && company.id.toString() !== session.companyId) {
       // Never reveal that the company exists for another tenant
       return NextResponse.json({ error: "Empresa no encontrada" }, { status: 404 });
     }
@@ -79,12 +80,12 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id } = params;
+  const id = stringToBigint(params.id);
 
   // Only SAAS_SUPER_ADMIN or COMPANY_ADMIN of that specific company
   if (
     session.role !== "SAAS_SUPER_ADMIN" &&
-    !(session.role === "COMPANY_ADMIN" && session.companyId === id)
+    !(session.role === "COMPANY_ADMIN" && session.companyId === id.toString())
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -209,7 +210,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { id } = params;
+  const id = stringToBigint(params.id);
 
   const existing = await prisma.company.findUnique({
     where: { id },

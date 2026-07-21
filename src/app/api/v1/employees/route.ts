@@ -4,6 +4,7 @@ import {
   requireApiToken,
 } from "@/lib/api-token-auth";
 import { prisma } from "@/lib/prisma";
+import { stringToBigint } from "@/lib/bigint";
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiToken(request, "read");
@@ -12,10 +13,11 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const status = searchParams.get("status") ?? "ACTIVE";
   const branchId = searchParams.get("branchId") ?? undefined;
+  const branchIdBigInt = branchId ? stringToBigint(branchId) : undefined;
 
   if (branchId) {
     const branch = await prisma.branch.findFirst({
-      where: { id: branchId, companyId: auth.companyId },
+      where: { id: branchIdBigInt, companyId: stringToBigint(auth.companyId) },
       select: { id: true },
     });
     if (!branch) {
@@ -24,10 +26,8 @@ export async function GET(request: NextRequest) {
   }
 
   const employees = await prisma.employee.findMany({
-    where: {
-      companyId: auth.companyId,
-      status: status as "ACTIVE" | "INACTIVE",
-      ...(branchId ? { branchId } : {}),
+    where: { companyId: stringToBigint(auth.companyId), status: status as "ACTIVE" | "INACTIVE",
+      ...(branchId ? { branchId: branchIdBigInt } : {}),
     },
     select: {
       id: true,

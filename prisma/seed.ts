@@ -36,8 +36,10 @@ async function main() {
       city: "Bogotá",
       country: "Colombia",
       status: Status.ACTIVE,
-      subscriptionExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 días de prueba
-      maxEmployees: 10,
+      plan: "free",
+      subscriptionStatus: "none",
+      subscriptionExpiresAt: null,
+      maxEmployees: 3,
     },
   });
 
@@ -55,12 +57,32 @@ async function main() {
       city: "Barranquilla",
       country: "Colombia",
       status: Status.ACTIVE,
-      subscriptionExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 días de prueba
-      maxEmployees: 10,
+      plan: "free",
+      subscriptionStatus: "none",
+      subscriptionExpiresAt: null,
+      maxEmployees: 3,
     },
   });
 
-  console.log("✅ Empresas creadas (7 días de prueba, 10 empleados máx)");
+  console.log("✅ Empresas creadas (plan free, 3 empleados máx)");
+
+  await prisma.billingConfig.upsert({
+    where: { id: BigInt(1) },
+    update: {
+      freeEmployeeLimit: 3,
+      priceCopPerEmployeeMonthly: 3500,
+      priceUsdPerEmployeeMonthly: 1,
+      descripcionProducto: "cuenti time",
+    },
+    create: {
+      id: BigInt(1),
+      freeEmployeeLimit: 3,
+      priceCopPerEmployeeMonthly: 3500,
+      priceUsdPerEmployeeMonthly: 1,
+      descripcionProducto: "cuenti time",
+    },
+  });
+  console.log("✅ BillingConfig sembrada (3500 COP / 1 USD por empleado/mes)");
 
   // ─── Branches Company 1 ────────────────────────────────────────────────────
   const branch1 = await prisma.branch.upsert({

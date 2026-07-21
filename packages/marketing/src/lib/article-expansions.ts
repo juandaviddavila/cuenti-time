@@ -432,3 +432,11 @@ export const articleExpansions: Record<ExpandableArticleSlug, ArticleSection[]> 
   ],
 
 };
+
+export function getArticleExpansion(slug: string): ArticleSection[] {
+  if (slug in articleExpansions) {
+    return articleExpansions[slug as ExpandableArticleSlug];
+  }
+
+  return [];
+}

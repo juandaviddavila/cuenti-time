@@ -5,11 +5,12 @@ import { prisma } from "@/lib/prisma";
 import { requireSession, getCompanyFilter } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { scheduleWebhookEvent } from "@/lib/webhooks/dispatch";
+import { stringToBigint } from "@/lib/bigint";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const createBranchSchema = z.object({
-  companyId: z.string().cuid(),
+  companyId: z.coerce.bigint().positive(),
   name: z.string().min(1).max(200),
   code: z.string().min(1).max(50),
   address: z.string().max(500).optional(),
@@ -43,9 +44,10 @@ export async function GET(request: NextRequest) {
 
   // If super admin passes companyId as query param, narrow to that company
   const queryCompanyId = searchParams.get("companyId") ?? undefined;
+  const queryCompanyIdBigInt = queryCompanyId ? stringToBigint(queryCompanyId) : undefined;
   const resolvedCompanyFilter: Prisma.BranchWhereInput =
     session.role === "SAAS_SUPER_ADMIN" && queryCompanyId
-      ? { companyId: queryCompanyId }
+      ? { companyId: queryCompanyIdBigInt }
       : companyFilter;
 
   const where: Prisma.BranchWhereInput = {
@@ -132,13 +134,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Empresa no definida" }, { status: 400 });
   }
 
-  if (session.role === "COMPANY_ADMIN" && session.companyId !== resolvedCompanyId) {
+  if (session.role === "COMPANY_ADMIN" && session.companyId !== resolvedCompanyId?.toString()) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   try {
     const branch = await prisma.branch.create({
-      data: { ...parsed.data, companyId: resolvedCompanyId },
+      data: { ...parsed.data, companyId: BigInt(resolvedCompanyId) },
       include: {
         company: { select: { name: true } },
         _count: { select: { employees: true } },

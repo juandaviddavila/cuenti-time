@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { requireSession, requireIntegrationAccess } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { stringToBigint, serializeRecord } from "@/lib/bigint";
 import {
   decryptApiToken,
   encryptApiToken,
@@ -41,7 +42,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     new URL(request.url).searchParams.get("rotate") === "1";
 
   const existing = await prisma.apiToken.findFirst({
-    where: { id: params.id, companyId: session.companyId },
+    where: { id: stringToBigint(params.id), companyId: stringToBigint(session.companyId) },
     select: {
       id: true,
       name: true,
@@ -66,12 +67,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         companyId: existing.companyId,
         newValues: { name: existing.name, revealed: true },
       });
-      return NextResponse.json({
+      return NextResponse.json(serializeRecord({
         id: existing.id,
         name: existing.name,
         token: raw,
         regenerated: false,
-      });
+      }));
     }
 
     // Legacy sin cipher, o rotación forzada: nuevo secreto.
@@ -103,7 +104,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       },
     });
 
-    return NextResponse.json({
+    return NextResponse.json(serializeRecord({
       id: existing.id,
       name: existing.name,
       token: rawToken,
@@ -111,7 +112,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       message: existing.tokenCipher
         ? "Se generó un secreto nuevo. Actualiza tus integraciones."
         : "Este token era antiguo y no tenía copia recuperable. Se generó un secreto nuevo.",
-    });
+    }));
   } catch (err) {
     console.error("POST /api/api-tokens/[id]/reveal error:", err);
     return NextResponse.json(

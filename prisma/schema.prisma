@@ -23,8 +23,16 @@ model Company {
   status                  Status              @default(ACTIVE)
   
   // Suscripción y límites
+  /// free = cupo gratis sin API/MCP; paid = plan de pago por empleado
+  plan                    String              @default("free")
+  /// none | active | pending_payment | expired
+  subscriptionStatus      String              @default("none")
   subscriptionExpiresAt   DateTime?
-  maxEmployees            Int                 @default(10)
+  maxEmployees            Int                 @default(3)
+  /// Evita reenviar el recordatorio de renovación para la misma fecha de vencimiento
+  subscriptionRenewalReminderFor DateTime?
+
+  billingInvoices         BillingInvoice[]
   
   // Tolerancias de asistencia
   lateToleranceMinutes           Int                 @default(10)
@@ -463,6 +471,65 @@ model Payment {
 
   @@index([companyId])
   @@index([wompiReference])
+  @@index([status])
+}
+
+/// Configuración comercial y de Cuenti Pay (fila única id=1)
+model BillingConfig {
+  id                         BigInt   @id @default(autoincrement())
+  freeEmployeeLimit          Int      @default(3)
+  priceCopPerEmployeeMonthly Int      @default(3500)
+  priceUsdPerEmployeeMonthly Float    @default(1)
+  tipoDocumento              Int      @default(9)
+  typeMatchProducto          Int      @default(1)
+  idConsecutivo              Int      @default(1)
+  idSucursal                 Int      @default(5)
+  idBodega                   Int      @default(5)
+  idVendedor                 Int      @default(1)
+  idEmpleado                 Int      @default(1)
+  idProductoCop              Int      @default(123)
+  idProductoUsd              Int      @default(123)
+  idConsecutivoLinkPago      Int      @default(60)
+  convertirRemisionFactura   Int      @default(1)
+  descripcionProducto        String   @default("cuenti time")
+  updatedAt                  DateTime @updatedAt
+  createdAt                  DateTime @default(now())
+}
+
+model BillingInvoice {
+  id                   BigInt    @id @default(autoincrement())
+  codigoUnico          String    @unique
+  companyId            BigInt
+  createdByUserId      BigInt?
+  /// pending | paid | cancelled | failed
+  status               String    @default("pending")
+  /// subscription | addon | renewal
+  kind                 String
+  /// COP | USD
+  currency             String
+  targetEmployeeSlots  Int
+  billedEmployeeQuantity Int
+  unitPrice            Float
+  totalAmount          Float
+  proratedDays         Int?
+  periodStart          DateTime
+  periodEnd            DateTime
+  customerNombre       String
+  customerIdentificacion String
+  customerTelefono     String
+  customerTipoPersona  Int
+  paymentUrl           String?
+  invoiceUrlExternal   String?
+  cuentiInternalUrl    String?
+  cuentiTransactionId  Int?
+  cuentiRawResponse    Json?
+  cuentiErrorMessage   String?   @db.Text
+  paidAt               DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  company              Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, status])
   @@index([status])
 }
 

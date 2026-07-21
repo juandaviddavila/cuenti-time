@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession, getCompanyFilter } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { stringToBigint } from "@/lib/bigint";
 
 const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -88,8 +89,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const companyIdBigInt = stringToBigint(companyId);
     const shift = await prisma.shift.create({
-      data: { companyId, ...parsed.data },
+      data: { companyId: companyIdBigInt, ...parsed.data },
     });
     await createAuditLog({
       request,
@@ -97,7 +99,7 @@ export async function POST(request: NextRequest) {
       action: "CREATE",
       entity: "SHIFT",
       entityId: shift.id,
-      companyId,
+      companyId: companyIdBigInt,
       newValues: { name: shift.name },
     });
     return NextResponse.json(shift, { status: 201 });

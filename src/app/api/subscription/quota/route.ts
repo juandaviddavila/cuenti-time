@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/server-auth";
 import { getFaceQuotaStatus } from "@/lib/subscription";
+import { stringToBigint } from "@/lib/bigint";
 
 export async function GET() {
   let session;
@@ -14,7 +15,7 @@ export async function GET() {
     return NextResponse.json({ error: "Sin empresa asociada" }, { status: 400 });
   }
 
-  const quota = await getFaceQuotaStatus(session.companyId);
+  const quota = await getFaceQuotaStatus(stringToBigint(session.companyId));
   if (!quota) {
     return NextResponse.json({ error: "Empresa no encontrada" }, { status: 404 });
   }

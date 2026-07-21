@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
 import { parseLocalDateParam } from "@/lib/hr/local-date";
 import { scheduleWebhookEvent } from "@/lib/webhooks/dispatch";
+import { stringToBigint } from "@/lib/bigint";
 
 const attendanceSchema = z.object({
   employeeId: z.string().min(1),
@@ -33,11 +34,13 @@ export async function GET(request: NextRequest) {
   const from = searchParams.get("from");
   const to = searchParams.get("to");
   const employeeId = searchParams.get("employeeId") ?? undefined;
+  const employeeIdBigInt = employeeId ? stringToBigint(employeeId) : undefined;
   const branchId = searchParams.get("branchId") ?? undefined;
+  const branchIdBigInt = branchId ? stringToBigint(branchId) : undefined;
 
   if (employeeId) {
     const employee = await prisma.employee.findFirst({
-      where: { id: employeeId, companyId: auth.companyId },
+      where: { id: employeeIdBigInt, companyId: stringToBigint(auth.companyId) },
       select: { id: true },
     });
     if (!employee) {
@@ -47,7 +50,7 @@ export async function GET(request: NextRequest) {
 
   if (branchId) {
     const branch = await prisma.branch.findFirst({
-      where: { id: branchId, companyId: auth.companyId },
+      where: { id: branchIdBigInt, companyId: stringToBigint(auth.companyId) },
       select: { id: true },
     });
     if (!branch) {
@@ -67,10 +70,9 @@ export async function GET(request: NextRequest) {
   }
 
   const records = await prisma.attendanceRecord.findMany({
-    where: {
-      companyId: auth.companyId,
-      ...(employeeId ? { employeeId } : {}),
-      ...(branchId ? { branchId } : {}),
+    where: { companyId: stringToBigint(auth.companyId),
+      ...(employeeId ? { employeeId: employeeIdBigInt } : {}),
+      ...(branchId ? { branchId: branchIdBigInt } : {}),
       ...(recordedAt ? { recordedAt } : {}),
     },
     orderBy: { recordedAt: "desc" },
@@ -103,14 +105,16 @@ export async function POST(request: NextRequest) {
   }
 
   const { employeeId, branchId, type, recordedAt } = parsed.data;
+  const employeeIdBigInt = stringToBigint(employeeId);
+  const branchIdBigInt = stringToBigint(branchId);
 
   const [employee, branch] = await Promise.all([
     prisma.employee.findFirst({
-      where: { id: employeeId, companyId: auth.companyId },
+      where: { id: employeeIdBigInt, companyId: stringToBigint(auth.companyId) },
       select: { id: true, companyId: true, fullName: true, status: true },
     }),
     prisma.branch.findFirst({
-      where: { id: branchId, companyId: auth.companyId },
+      where: { id: branchIdBigInt, companyId: stringToBigint(auth.companyId) },
       select: {
         id: true,
         companyId: true,
@@ -142,9 +146,8 @@ export async function POST(request: NextRequest) {
       const dayEnd = endOfDay(at);
 
       const lastRecord = await tx.attendanceRecord.findFirst({
-        where: {
-          companyId: auth.companyId,
-          employeeId,
+        where: { companyId: stringToBigint(auth.companyId),
+          employeeId: employeeIdBigInt,
           recordedAt: { gte: dayStart, lte: dayEnd },
         },
         orderBy: { recordedAt: "desc" },
@@ -174,10 +177,9 @@ export async function POST(request: NextRequest) {
       }
 
       return tx.attendanceRecord.create({
-        data: {
-          companyId: auth.companyId,
-          employeeId,
-          branchId,
+        data: { companyId: stringToBigint(auth.companyId),
+          employeeId: employeeIdBigInt,
+          branchId: branchIdBigInt,
           type,
           recordedAt: at,
           isManual: false,
@@ -200,8 +202,7 @@ export async function POST(request: NextRequest) {
       newValues: { employeeId, branchId, type, source: "api-v1" },
     });
 
-    scheduleWebhookEvent({
-      companyId: auth.companyId,
+    scheduleWebhookEvent({ companyId: stringToBigint(auth.companyId),
       event:
         type === "CHECK_IN" ? "attendance.checked_in" : "attendance.checked_out",
       data: {

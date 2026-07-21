@@ -4,6 +4,7 @@ import { getServerSession } from "@/lib/server-auth";
 import { isSubscriptionExpired } from "@/lib/subscription";
 import { isSuperAdmin } from "@/lib/super-admin";
 import { SuperAdminClient } from "./super-admin-client";
+import { bigintToString } from "@/lib/bigint";
 
 export default async function SuperAdminPage() {
   const session = await getServerSession();
@@ -27,13 +28,13 @@ export default async function SuperAdminPage() {
   });
 
   const facesByCompany = new Map(
-    faceCounts.map((row) => [row.companyId, row._count._all])
+    faceCounts.map((row) => [bigintToString(row.companyId), row._count._all])
   );
 
   return (
     <SuperAdminClient
       companies={companies.map((c) => ({
-        id: c.id,
+        id: bigintToString(c.id),
         name: c.name,
         legalName: c.legalName,
         taxId: c.taxId,
@@ -43,7 +44,7 @@ export default async function SuperAdminPage() {
         maxEmployees: c.maxEmployees,
         branchCount: c._count.branches,
         employeeCount: c._count.employees,
-        registeredFaces: facesByCompany.get(c.id) ?? 0,
+        registeredFaces: facesByCompany.get(bigintToString(c.id)) ?? 0,
         subscriptionExpired: isSubscriptionExpired(c.subscriptionExpiresAt),
         createdAt: c.createdAt.toISOString(),
       }))}

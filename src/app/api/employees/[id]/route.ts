@@ -7,11 +7,12 @@ import { toPgVector } from "@/lib/ai/pgvector";
 import { createAuditLog } from "@/lib/audit";
 import { canRegisterAdditionalFace, requireActiveCompanySubscription } from "@/lib/subscription";
 import { scheduleWebhookEvent } from "@/lib/webhooks/dispatch";
+import { stringToBigint } from "@/lib/bigint";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
 const updateEmployeeSchema = z.object({
-  branchId: z.string().cuid().optional(),
+  branchId: z.coerce.bigint().positive().optional(),
   fullName: z.string().min(1).max(200).optional(),
   documentType: z.enum(["CC", "CE", "PASSPORT", "NIT", "OTHER"]).optional(),
   documentNumber: z.string().min(1).max(50).optional(),
@@ -31,9 +32,9 @@ const updateEmployeeSchema = z.object({
   faceRegisteredAt: z.string().datetime().optional().nullable(),
   biometricConsentAt: z.string().datetime().optional().nullable(),
   // Puede ser cuid o id fijo del seed/registro (p.ej. pos-general-<companyId>)
-  positionId: z.string().min(1).max(100).optional().nullable().or(z.literal("").transform(() => null)),
+  positionId: z.coerce.bigint().positive().nullish().or(z.literal("").transform(() => null)),
   faceEmbedding: z.array(z.number()).length(128).optional().nullable(),
-  faceEmbeddingId: z.string().optional().nullable(),
+  faceEmbeddingId: z.coerce.bigint().positive().nullish(),
   status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
   hireDate: z.string().datetime().optional().or(z.literal("").transform(() => undefined)),
   internalCode: z.string().max(50).optional().or(z.literal("").transform(() => undefined)),
@@ -51,7 +52,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id } = params;
+  const id = stringToBigint(params.id);
 
   try {
     const employee = await prisma.employee.findUnique({
@@ -69,7 +70,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     // Verify tenant isolation
     if (
       session.role !== "SAAS_SUPER_ADMIN" &&
-      employee.companyId !== session.companyId
+      employee.companyId.toString() !== session.companyId
     ) {
       return NextResponse.json({ error: "Empleado no encontrado" }, { status: 404 });
     }
@@ -99,7 +100,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { id } = params;
+  const id = stringToBigint(params.id);
 
   const existing = await prisma.employee.findUnique({
     where: { id },
@@ -113,7 +114,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   // Verify tenant isolation
   if (
     session.role !== "SAAS_SUPER_ADMIN" &&
-    existing.companyId !== session.companyId
+    existing.companyId.toString() !== session.companyId
   ) {
     return NextResponse.json({ error: "Empleado no encontrado" }, { status: 404 });
   }
@@ -306,7 +307,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { id } = params;
+  const id = stringToBigint(params.id);
 
   const existing = await prisma.employee.findUnique({
     where: { id },
@@ -319,7 +320,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   // Verify tenant isolation
   if (
     session.role !== "SAAS_SUPER_ADMIN" &&
-    existing.companyId !== session.companyId
+    existing.companyId.toString() !== session.companyId
   ) {
     return NextResponse.json({ error: "Empleado no encontrado" }, { status: 404 });
   }

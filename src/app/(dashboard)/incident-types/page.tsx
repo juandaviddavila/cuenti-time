@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/server-auth";
 import { IncidentTypesClient } from "./incident-types-client";
 import type { IncidentType } from "@/types/incident-type";
+import { bigintToString } from "@/lib/bigint";
 
 export default async function IncidentTypesPage() {
   const session = await getServerSession();
@@ -29,7 +30,7 @@ export default async function IncidentTypesPage() {
   return (
     <IncidentTypesClient
       userRole={session.role}
-      companyId={session.companyId ?? ""}
+      companyId={bigintToString(session.companyId) ?? ""}
       initialIncidentTypes={incidentTypes}
     />
   );

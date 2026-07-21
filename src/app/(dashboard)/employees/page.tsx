@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession, getCompanyFilter } from "@/lib/server-auth";
 import { EmployeesClient } from "./employees-client";
 import type { Position } from "@/types/position";
+import { serializeRecords, bigintToString } from "@/lib/bigint";
 
 export default async function EmployeesPage() {
   const session = await getServerSession();
@@ -49,9 +50,9 @@ export default async function EmployeesPage() {
 
   return (
     <EmployeesClient
-      companyId={session.companyId ?? ""}
+      companyId={bigintToString(session.companyId) ?? ""}
       userRole={session.role}
-      employees={employees.map((e) => ({
+      employees={serializeRecords(employees.map((e) => ({
         id: e.id,
         companyId: e.companyId,
         branchId: e.branchId,
@@ -71,8 +72,8 @@ export default async function EmployeesPage() {
         internalCode: e.internalCode ?? undefined,
         createdAt: e.createdAt.toISOString(),
         updatedAt: e.updatedAt.toISOString(),
-      }))}
-      branches={branches}
+      })))}
+      branches={serializeRecords(branches)}
       positions={positions}
     />
   );

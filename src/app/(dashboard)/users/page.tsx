@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession, getCompanyFilter } from "@/lib/server-auth";
 import { resolveEffectiveRole } from "@/lib/super-admin-access";
 import { UsersClient } from "./users-client";
+import { bigintToString } from "@/lib/bigint";
 
 export default async function UsersPage() {
   const session = await getServerSession();
@@ -40,20 +41,20 @@ export default async function UsersPage() {
   return (
     <UsersClient
       users={users.map((u) => ({
-        id: u.id,
-        companyId: u.companyId ?? undefined,
+         id: bigintToString(u.id),
+         companyId: u.companyId ? bigintToString(u.companyId) : undefined,
         name: u.name,
         email: u.email,
         role: resolveEffectiveRole(u.email, u.role),
         status: u.status,
         avatar: u.avatar ?? undefined,
-        branchId: u.branchId ?? undefined,
+         branchId: u.branchId ? bigintToString(u.branchId) : undefined,
         bypassGeofence: u.bypassGeofence,
         canManageIntegrations: u.canManageIntegrations,
         lastLoginAt: u.lastLoginAt?.toISOString() ?? undefined,
         createdAt: u.createdAt.toISOString(),
       }))}
-      branches={branches}
+       branches={branches.map((branch) => ({ ...branch, id: bigintToString(branch.id) }))}
       currentUserRole={session.role}
       currentCompanyId={session.companyId ?? ""}
     />

@@ -4,6 +4,7 @@ import {
   requireApiToken,
 } from "@/lib/api-token-auth";
 import { prisma } from "@/lib/prisma";
+import { stringToBigint } from "@/lib/bigint";
 
 /** Datos de la empresa dueña del token (nunca otra). */
 export async function GET(request: NextRequest) {
@@ -11,7 +12,7 @@ export async function GET(request: NextRequest) {
   if (!isApiTokenContext(auth)) return auth;
 
   const company = await prisma.company.findFirst({
-    where: { id: auth.companyId, status: "ACTIVE" },
+    where: { id: stringToBigint(auth.companyId), status: "ACTIVE" },
     select: {
       id: true,
       name: true,

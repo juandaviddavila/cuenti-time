@@ -3,9 +3,10 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { stringToBigint } from "@/lib/bigint";
 
 const updateEmployeeShiftSchema = z.object({
-  shiftId: z.string().cuid().optional(),
+  shiftId: z.coerce.bigint().positive().optional(),
   startDate: z.string().datetime().optional(),
   endDate: z.string().datetime().optional().nullable(),
 });
@@ -24,11 +25,11 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors }, { status: 400 });
 
   const assignment = await prisma.employeeShift.findUnique({
-    where: { id: params.id },
+    where: { id: stringToBigint(params.id) },
     include: { employee: { select: { companyId: true } }, shift: { select: { companyId: true } } },
   });
   if (!assignment) return NextResponse.json({ error: "Asignación no encontrada" }, { status: 404 });
-  if (session.role !== "SAAS_SUPER_ADMIN" && assignment.employee.companyId !== session.companyId) {
+  if (session.role !== "SAAS_SUPER_ADMIN" && assignment.employee.companyId.toString() !== session.companyId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -51,7 +52,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
   try {
     const updated = await prisma.employeeShift.update({
-      where: { id: params.id },
+      where: { id: stringToBigint(params.id) },
       data,
       include: { employee: { select: { id: true, fullName: true } }, shift: { select: { id: true, name: true } } },
     });
@@ -79,15 +80,15 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const assignment = await prisma.employeeShift.findUnique({
-    where: { id: params.id },
+    where: { id: stringToBigint(params.id) },
     include: { employee: { select: { companyId: true } } },
   });
   if (!assignment) return NextResponse.json({ error: "Asignación no encontrada" }, { status: 404 });
-  if (session.role !== "SAAS_SUPER_ADMIN" && assignment.employee.companyId !== session.companyId) {
+  if (session.role !== "SAAS_SUPER_ADMIN" && assignment.employee.companyId.toString() !== session.companyId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   try {
-    await prisma.employeeShift.delete({ where: { id: params.id } });
+    await prisma.employeeShift.delete({ where: { id: stringToBigint(params.id) } });
     await createAuditLog({
       request,
       session,

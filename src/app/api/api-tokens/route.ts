@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession, requireIntegrationAccess } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { encryptApiToken } from "@/lib/api-token-crypto";
+import { stringToBigint, serializeRecords } from "@/lib/bigint";
 
 const createTokenSchema = z.object({
   name: z.string().min(1).max(100),
@@ -31,7 +32,7 @@ export async function GET(_request: NextRequest) {
 
   try {
     const tokens = await prisma.apiToken.findMany({
-      where: { companyId: session.companyId },
+      where: { companyId: stringToBigint(session.companyId) },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
@@ -95,7 +96,7 @@ export async function POST(request: NextRequest) {
   try {
     const token = await prisma.apiToken.create({
       data: {
-        companyId,
+        companyId: stringToBigint(companyId),
         name: parsed.data.name,
         scopes: parsed.data.scopes,
         token: hashed,
@@ -114,7 +115,7 @@ export async function POST(request: NextRequest) {
       newValues: { name: token.name, scopes: token.scopes },
     });
     return NextResponse.json(
-      { ...token, token: rawToken, recoverable: true },
+      { ...serializeRecords([token])[0], token: rawToken, recoverable: true },
       { status: 201 }
     );
   } catch (err) {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { stringToBigint } from "@/lib/bigint";
 
 type RouteParams = { params: { id: string } };
 
@@ -14,12 +15,12 @@ const updateAttendanceSchema = z.object({
 });
 
 async function getRecordIfAllowed(
-  id: string,
+  id: bigint,
   session: Awaited<ReturnType<typeof requireSession>>
 ) {
   const record = await prisma.attendanceRecord.findUnique({ where: { id } });
   if (!record) return null;
-  if (session.role !== "SAAS_SUPER_ADMIN" && record.companyId !== session.companyId) {
+  if (session.role !== "SAAS_SUPER_ADMIN" && record.companyId.toString() !== session.companyId) {
     return null;
   }
   return record;
@@ -52,19 +53,19 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     );
   }
 
-  const existing = await getRecordIfAllowed(params.id, session);
+  const existing = await getRecordIfAllowed(stringToBigint(params.id), session);
   if (!existing) {
     return NextResponse.json({ error: "Asistencia no encontrada" }, { status: 404 });
   }
 
   try {
     const updated = await prisma.attendanceRecord.update({
-      where: { id: params.id },
+      where: { id: stringToBigint(params.id) },
       data: {
         recordedAt: new Date(parsed.data.recordedAt),
         notes: parsed.data.notes === undefined ? existing.notes : parsed.data.notes,
         isManual: true,
-        manualBy: session.userId,
+        manualBy: session.userId.toString(),
       },
       include: {
         employee: { select: { fullName: true, photo: true, position: { select: { name: true } } } },
@@ -113,13 +114,13 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const existing = await getRecordIfAllowed(params.id, session);
+  const existing = await getRecordIfAllowed(stringToBigint(params.id), session);
   if (!existing) {
     return NextResponse.json({ error: "Asistencia no encontrada" }, { status: 404 });
   }
 
   try {
-    await prisma.attendanceRecord.delete({ where: { id: params.id } });
+    await prisma.attendanceRecord.delete({ where: { id: stringToBigint(params.id) } });
 
     await createAuditLog({
       request,

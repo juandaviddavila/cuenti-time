@@ -6,11 +6,12 @@ import { prisma } from "@/lib/prisma";
 import { requireSession, getCompanyFilter } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { resolveEffectiveRole } from "@/lib/super-admin-access";
+import { stringToBigint } from "@/lib/bigint";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const createUserSchema = z.object({
-  companyId: z.string().cuid().optional().nullable(),
+  companyId: z.coerce.bigint().positive().nullish(),
   name: z.string().min(1).max(200),
   email: z.string().email().max(254).toLowerCase(),
   password: z.string().min(8).max(128),
@@ -26,7 +27,7 @@ const createUserSchema = z.object({
     .default("REPORT_VIEWER"),
   status: z.enum(["ACTIVE", "INACTIVE"]).default("ACTIVE"),
   avatar: z.string().url().optional(),
-  branchId: z.string().cuid().optional().nullable(),
+  branchId: z.coerce.bigint().positive().nullish(),
   bypassGeofence: z.boolean().default(false),
   canManageIntegrations: z.boolean().default(false),
 });
@@ -50,9 +51,10 @@ export async function GET(request: NextRequest) {
 
   // Super admin can filter by explicit companyId param
   const queryCompanyId = searchParams.get("companyId") ?? undefined;
+  const queryCompanyIdBigInt = queryCompanyId ? stringToBigint(queryCompanyId) : undefined;
   const resolvedCompanyFilter: Prisma.UserWhereInput =
     session.role === "SAAS_SUPER_ADMIN" && queryCompanyId
-      ? { companyId: queryCompanyId }
+      ? { companyId: queryCompanyIdBigInt }
       : companyFilter;
 
   const where: Prisma.UserWhereInput = {
@@ -152,13 +154,13 @@ export async function POST(request: NextRequest) {
 
   // COMPANY_ADMIN can only create users for their own company
   if (session.role === "COMPANY_ADMIN") {
-    if (companyId && companyId !== session.companyId) {
+    if (companyId && companyId.toString() !== session.companyId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   }
 
   const resolvedCompanyId =
-    session.role === "SAAS_SUPER_ADMIN" ? (companyId ?? null) : session.companyId;
+    session.role === "SAAS_SUPER_ADMIN" ? (companyId ? BigInt(companyId) : null) : session.companyId ? BigInt(session.companyId) : null;
 
   const hashedPassword = await bcrypt.hash(password, 12);
 

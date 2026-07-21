@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { stringToBigint, serializeRecord } from "@/lib/bigint";
+import { stringToBigint, serializeRecord, bigintToString } from "@/lib/bigint";
 import type { ServerSession } from "@/lib/server-auth";
 
 interface CreateAuditLogOptions {
@@ -9,7 +9,7 @@ interface CreateAuditLogOptions {
   session: ServerSession | null;
   action: string;
   entity: string;
-  entityId?: string | null;
+  entityId?: string | bigint | null;
   oldValues?: Record<string, unknown> | null;
   newValues?: Record<string, unknown> | null;
   companyId?: bigint | string | null;
@@ -17,17 +17,19 @@ interface CreateAuditLogOptions {
 
 export async function createAuditLog(options: CreateAuditLogOptions) {
   try {
+    const companyId = options.companyId ?? options.session?.companyId;
     await prisma.auditLog.create({
       data: {
-        companyId: options.companyId
-          ? typeof options.companyId === "bigint"
-            ? options.companyId
-            : stringToBigint(options.companyId)
-          : options.session?.companyId ?? null,
-        userId: options.session?.userId ?? null,
+        companyId: companyId ? stringToBigint(companyId) : null,
+        userId: options.session?.userId ? stringToBigint(options.session.userId) : null,
         action: options.action,
         entity: options.entity,
-        entityId: options.entityId ?? null,
+        entityId:
+          options.entityId === null || options.entityId === undefined
+            ? null
+            : typeof options.entityId === "bigint"
+              ? bigintToString(options.entityId)
+              : options.entityId,
         oldValues: options.oldValues ? (serializeRecord(options.oldValues) as Prisma.InputJsonValue) : Prisma.JsonNull,
         newValues: options.newValues ? (serializeRecord(options.newValues) as Prisma.InputJsonValue) : Prisma.JsonNull,
         ipAddress:

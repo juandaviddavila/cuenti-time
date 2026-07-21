@@ -9,6 +9,7 @@ import {
   WEBHOOK_EVENTS,
   isWebhookEvent,
 } from "@/lib/webhooks/events";
+import { stringToBigint, serializeRecord } from "@/lib/bigint";
 
 const createWebhookSchema = z.object({
   url: z.string().url().max(2000),
@@ -46,7 +47,7 @@ export async function GET() {
 
   try {
     const subscriptions = await prisma.webhookSubscription.findMany({
-      where: { companyId: session.companyId },
+      where: { companyId: stringToBigint(session.companyId) },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
@@ -116,7 +117,7 @@ export async function POST(request: NextRequest) {
   try {
     const subscription = await prisma.webhookSubscription.create({
       data: {
-        companyId,
+        companyId: stringToBigint(companyId),
         url: parsed.data.url,
         events: JSON.stringify(parsed.data.events),
         secret,
@@ -145,11 +146,11 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json(
-      {
+      serializeRecord({
         ...subscription,
         events: parsed.data.events,
         secret,
-      },
+      }),
       { status: 201 }
     );
   } catch (err) {

@@ -14,7 +14,7 @@
 | PostgreSQL + pgvector | 16+ | Base de datos y búsqueda vectorial facial (`root` / `1234` / `localhost:5432`) |
 | Zustand | 4 | Estado global liviano |
 | React Hook Form | 7 | Formularios |
-| Zod | 3 | Validación de esquemas |
+| Zod | 4 | Validación de esquemas |
 | Recharts | 2 | Gráficas interactivas |
 | bcryptjs | 2 | Hash de contraseñas |
 | jsonwebtoken | 9 | JWT para auth |
@@ -48,6 +48,9 @@ pnpm db:generate   # = prisma generate
 pnpm db:push       # = prisma db push
 pnpm db:seed       # = prisma db seed
 pnpm db:studio     # = prisma studio (UI gráfica)
+
+# Reset destructivo (solo cuando se autorice borrar todos los datos)
+pnpm db:generate && pnpm exec prisma db push --force-reset && pnpm db:seed
 
 # Build / Lint
 pnpm build
@@ -134,15 +137,27 @@ Company → Payment[] / WebhookSubscription[] / LateReportLog[]
 AuditLog (registra todos los cambios)
 ```
 
-- IDs: `cuid()` en todos los modelos
+- IDs: `BigInt @id @default(autoincrement())` en todos los modelos; las FK también son `BigInt`
+- Frontera de serialización: Prisma usa `bigint`; JWT, JSON, frontend, webhooks y MCP usan IDs como strings decimales
+- Conversión centralizada en `src/lib/bigint.ts` (`stringToBigint`, `bigintToString`, `serializeRecord`, `bigintReplacer`)
+- Nunca pasar valores `bigint` directamente a `NextResponse.json()` o `JSON.stringify()` fuera de la serialización centralizada
+- Los parámetros `[id]` de Next.js llegan como strings y deben validarse como decimal y convertirse a `bigint` antes de consultar Prisma
 - Soft-delete: campo `status` (ACTIVE/INACTIVE) o `active: Boolean`
 - Schema en: `prisma/schema.prisma`
 - Seed en: `prisma/seed.ts`
 - Embeddings faciales: `Employee.faceEmbedding Unsupported("vector(128)")` con índice `ivfflat`; crear extensión/índice con `prisma/pgvector.sql`
-- `Plan` y `PlanType` fueron eliminados. El modelo SaaS actual usa `Company.subscriptionExpiresAt`, `Company.maxEmployees`, `Payment` y futura integración Wompi.
+- `Plan` y `PlanType` fueron eliminados. El modelo SaaS actual usa `Company.plan` (`free`/`paid`), `Company.subscriptionStatus`, `Company.subscriptionExpiresAt`, `Company.maxEmployees` y los modelos de facturación `BillingConfig` + `BillingInvoice` (integración **Cuenti Pay**). Wompi quedó deprecado.
 - `Company.maxEmployees` limita únicamente nuevos registros faciales, no la creación de empleados básicos.
+- `BillingConfig`: precios y credenciales Cuenti Pay leídos desde DB (`freeEmployeeLimit`, `priceCopPerEmployeeMonthly`, `priceUsdPerEmployeeMonthly`, `tipoDocumento`, `idProductoCop`, etc.). Nunca quemar precios/límites en UI.
+- `BillingInvoice`: factura por empresa (`codigoUnico`, `status`, `kind`, `currency`, `totalAmount`, `paymentUrl`, `cuentiTransactionId`).
 - `Company.faceMatchThreshold` (Float, default `0.6`): distancia euclidiana máxima para match facial (menor = más estricto). Editable en `/settings`; usado en `face/search`, `face/descriptors`, kiosk y registro facial.
 - `Branch.latitude`, `Branch.longitude`, `Branch.googlePlaceId`, `Branch.radiusMeters` controlan geofence para marcaciones faciales.
+
+### BigInt y límites de la aplicación
+- Los payloads públicos mantienen compatibilidad usando strings decimales, por ejemplo `{ "id": "42" }`.
+- Los claims JWT `userId`, `companyId` y `tokenId` son strings; convertirlos con `stringToBigint()` únicamente al construir filtros Prisma.
+- `AuditLog.entityId` continúa siendo string porque es una referencia polimórfica y debe soportar entidades distintas.
+- Tras cambiar el schema, ejecutar `pnpm db:generate`; si se reinicia la base, usar el comando destructivo anterior y volver a sembrar.
 
 ## Capa de IA Facial (Mock → Producción)
 
@@ -289,6 +304,7 @@ src/app/api/
 
 - Todo Server Component que consulte datos DEBE llamar `getServerSession()` y filtrar con `getCompanyFilter(session)` de `src/lib/server-auth.ts`.
 - `getCompanyFilter()` devuelve `{}` para `SAAS_SUPER_ADMIN` (ve todo) y `{ companyId }` para todos los demás.
+- `getCompanyFilter()` usa `bigint` internamente para Prisma; no exponer ese valor sin serializarlo en respuestas o tokens.
 - Para proteger `/super-admin` y sus APIs usar `isSuperAdmin(session)` de `src/lib/super-admin.ts`; no basta con leer el rol de Prisma.
 - Al buscar recursos por ID (employee, branch, etc.) siempre verificar que `resource.companyId === session.companyId` antes de devolver datos.
 - **Nunca** hacer `prisma.xxx.findMany()` sin filtro en producción — fuga multi-tenant.
@@ -345,6 +361,8 @@ src/app/api/
 
 - Usar `Array.from(map.values())` — NO `[...map.values()]`. El target TS no soporta spread de iteradores Map/Set.
 - Mismo para `Map.entries()`: usar `Array.from(store.entries()).forEach(...)`.
+- No usar `JSON.stringify()` directamente sobre resultados Prisma que contengan `bigint`; usar `serializeRecord()` o `bigintReplacer`.
+- En formularios Zod con `z.coerce` o `.default()`, usar `useForm<z.input<typeof schema>, unknown, z.output<typeof schema>>()` para separar entrada y salida.
 
 ## Middleware — reglas de seguridad
 
@@ -381,6 +399,8 @@ src/app/api/
 - [x] Cargo por defecto `general` al crear cuenta/empresa
 - [x] `Company.faceMatchThreshold` + deps exactas (`save-exact`) + header sin buscador vacío
 - [x] MCP RRHH remoto + webhooks con reintentos/logs (ver secciones abajo)
+- [x] Migración de IDs Prisma de cuid a BigInt autoincrement con serialización segura en todos los límites
+- [x] Verificación BigInt: helpers 8/8, MCP 29/29, TypeScript y `pnpm build`
 ## Webhooks outbound
 - Catálogo: `src/lib/webhooks/events.ts` (empleados, asistencia, novedades, sucursales).
 - Motor: `src/lib/webhooks/dispatch.ts` — enqueue `WebhookDelivery`, firma HMAC `X-Cuenti-Signature`, **1 intento inmediato + hasta 3 reintentos cada 10 min** (máx. 4 envíos; `WEBHOOK_MAX_RETRIES=3`) → `FAILED`.
@@ -409,7 +429,8 @@ src/app/api/
 
 ## Pendientes SaaS grandes
 - [x] Consola `/super-admin` para métricas, edición de suscripción/cupo e impersonación con banner/auditoría; acceso por `SUPER_ADMIN_EMAILS`
-- [ ] Wompi: pagos manuales mensual/anual, confirmación y webhook
+- [x] Cuenti Pay: `BillingConfig` + `BillingInvoice`, checkout **mensual**, addons prorrateados, webhook, void; landing `/precios` lee DB vía `/api/billing/config` (ver `docs/billing-cuenti-pay.md`)
+- [ ] Confirmar IDs reales Cuenti (producto COP/USD, sucursal, consecutivos) y `BILLING_WEBHOOK_SECRET` en producción
 - [x] Webhooks outbound: catálogo, HMAC, deliveries, 1+3 reintentos/10min, logs `[webhook]`
 - [x] MCP RRHH remoto (HTTP :4101) + tab Integraciones (Claude/ChatGPT first)
 - [x] OAuth 2.1 en endpoint MCP (DCR/PKCE/consent) **además** de Bearer `cuenti_`
@@ -424,5 +445,6 @@ src/app/api/
 - `getCompanyFilter()` retorna `{ companyId }` — NO usar en consultas a `prisma.company` (que filtra por `id`). Usar `{ id: session.companyId }` directamente para Company.
 - `z.preprocess()` causa conflicto de tipos con React Hook Form resolver. Usar `.optional().refine()` en su lugar.
 - Tras cambiar `schema.prisma`: `pnpm db:generate && pnpm db:push` y **reiniciar** el proceso `next` (el client no hot-reloadea).
+- El reset de BigInt ya fue ejecutado en desarrollo y eliminó los datos anteriores; requiere `db:seed` para restaurar las credenciales de prueba.
 
-*Última actualización: 2026-07-20 (tarde). MCP OAuth 2.1 adicional + Bearer; webhooks 1+3×10min; Integraciones Tokens|MCP|Webhooks; deps exactas; faceMatchThreshold; header sin buscador. Dev: `http://localhost:7578`, MCP `:4101`.*
+*Última actualización: 2026-07-20 (noche). BigInt autoincrement + serialización de IDs; build verificado; MCP OAuth 2.1 adicional + Bearer; webhooks 1+3×10min; Integraciones Tokens|MCP|Webhooks; deps exactas; faceMatchThreshold; header sin buscador. Dev: `http://localhost:7578`, MCP `:4101`.*

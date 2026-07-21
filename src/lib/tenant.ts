@@ -2,7 +2,7 @@ import type { UserRole } from "@/types/user";
 
 export interface TenantSession {
   userId: string;
-  companyId: bigint | null;
+  companyId: string | null;
   role: UserRole;
 }
 
@@ -15,5 +15,5 @@ export interface TenantSession {
 export function getCompanyFilter(session: TenantSession): { companyId?: bigint } {
   if (session.role === "SAAS_SUPER_ADMIN") return {};
   if (!session.companyId) return { companyId: -1n }; // no data returned
-  return { companyId: session.companyId };
+  return { companyId: BigInt(session.companyId) };
 }

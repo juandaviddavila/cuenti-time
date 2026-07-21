@@ -149,7 +149,7 @@ async function main() {
       const incident = await prisma.incident.create({
         data: {
           companyId: company.id,
-          employeeId: sample.employeeId,
+          employeeId: BigInt(sample.employeeId),
           incidentTypeId: lateType.id,
           date: day,
           reason: "smoke-test excuse",

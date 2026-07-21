@@ -4,6 +4,7 @@ import {
   requireApiToken,
 } from "@/lib/api-token-auth";
 import { prisma } from "@/lib/prisma";
+import { stringToBigint } from "@/lib/bigint";
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiToken(request, "read");
@@ -13,9 +14,7 @@ export async function GET(request: NextRequest) {
   const status = searchParams.get("status") ?? "ACTIVE";
 
   const branches = await prisma.branch.findMany({
-    where: {
-      companyId: auth.companyId,
-      status: status as "ACTIVE" | "INACTIVE",
+    where: { companyId: stringToBigint(auth.companyId), status: status as "ACTIVE" | "INACTIVE",
     },
     select: {
       id: true,

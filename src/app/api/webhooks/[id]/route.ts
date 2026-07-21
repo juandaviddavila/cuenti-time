@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession, requireIntegrationAccess } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { isWebhookEvent } from "@/lib/webhooks/events";
+import { stringToBigint } from "@/lib/bigint";
 
 const updateWebhookSchema = z.object({
   url: z.string().url().max(2000).optional(),
@@ -21,13 +22,13 @@ const updateWebhookSchema = z.object({
 type RouteParams = { params: { id: string } };
 
 async function getWebhookIfAllowed(
-  id: string,
+  id: bigint,
   session: Awaited<ReturnType<typeof requireSession>>
 ) {
   // Multi-tenant estricto: solo la empresa de la sesión.
   if (!session.companyId) return null;
   return prisma.webhookSubscription.findFirst({
-    where: { id, companyId: session.companyId },
+    where: { id, companyId: stringToBigint(session.companyId) },
   });
 }
 
@@ -46,7 +47,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const existing = await getWebhookIfAllowed(params.id, session);
+  const existing = await getWebhookIfAllowed(stringToBigint(params.id), session);
   if (!existing) {
     return NextResponse.json({ error: "Webhook no encontrado" }, { status: 404 });
   }
@@ -70,7 +71,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
   try {
     const updated = await prisma.webhookSubscription.update({
-      where: { id: params.id },
+      where: { id: stringToBigint(params.id) },
       data: {
         ...rest,
         ...(events ? { events: JSON.stringify(events) } : {}),
@@ -130,14 +131,14 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const existing = await getWebhookIfAllowed(params.id, session);
+  const existing = await getWebhookIfAllowed(stringToBigint(params.id), session);
   if (!existing) {
     return NextResponse.json({ error: "Webhook no encontrado" }, { status: 404 });
   }
 
   try {
     await prisma.webhookSubscription.update({
-      where: { id: params.id },
+      where: { id: stringToBigint(params.id) },
       data: { active: false },
     });
 

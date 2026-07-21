@@ -5,6 +5,7 @@ import {
 } from "@/lib/api-token-auth";
 import { prisma } from "@/lib/prisma";
 import { parseLocalDateParam } from "@/lib/hr/local-date";
+import { stringToBigint } from "@/lib/bigint";
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiToken(request, "read");
@@ -12,12 +13,14 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const employeeId = searchParams.get("employeeId") ?? undefined;
+  const employeeIdBigInt = employeeId ? stringToBigint(employeeId) : undefined;
   const shiftId = searchParams.get("shiftId") ?? undefined;
+  const shiftIdBigInt = shiftId ? stringToBigint(shiftId) : undefined;
   const onDate = searchParams.get("date");
 
   if (employeeId) {
     const employee = await prisma.employee.findFirst({
-      where: { id: employeeId, companyId: auth.companyId },
+      where: { id: employeeIdBigInt, companyId: stringToBigint(auth.companyId) },
       select: { id: true },
     });
     if (!employee) {
@@ -27,7 +30,7 @@ export async function GET(request: NextRequest) {
 
   if (shiftId) {
     const shift = await prisma.shift.findFirst({
-      where: { id: shiftId, companyId: auth.companyId },
+      where: { id: shiftIdBigInt, companyId: stringToBigint(auth.companyId) },
       select: { id: true },
     });
     if (!shift) {
@@ -40,9 +43,9 @@ export async function GET(request: NextRequest) {
   // Aislamiento: solo asignaciones de empleados de la empresa del token.
   const assignments = await prisma.employeeShift.findMany({
     where: {
-      employee: { companyId: auth.companyId },
-      ...(employeeId ? { employeeId } : {}),
-      ...(shiftId ? { shiftId } : {}),
+      employee: { companyId: stringToBigint(auth.companyId) },
+      ...(employeeId ? { employeeId: employeeIdBigInt } : {}),
+      ...(shiftId ? { shiftId: stringToBigint(shiftId) } : {}),
       ...(day
         ? {
             startDate: { lte: day },

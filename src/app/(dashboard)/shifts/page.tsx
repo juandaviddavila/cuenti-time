@@ -16,8 +16,8 @@ export default async function ShiftsPage() {
   });
 
   const serialized: Shift[] = shifts.map((s) => ({
-    id: s.id,
-    companyId: s.companyId,
+    id: s.id.toString(),
+    companyId: s.companyId.toString(),
     name: s.name,
     mondayStart: s.mondayStart,
     mondayEnd: s.mondayEnd,

@@ -7,10 +7,11 @@ import { createAuditLog } from "@/lib/audit";
 import { distanceInMeters } from "@/lib/geo";
 import { isMobileUserAgent } from "@/lib/device";
 import { scheduleWebhookEvent } from "@/lib/webhooks/dispatch";
+import { stringToBigint } from "@/lib/bigint";
 
 const createAttendanceSchema = z.object({
-  employeeId: z.string().cuid(),
-  branchId: z.string().cuid(),
+  employeeId: z.coerce.bigint().positive(),
+  branchId: z.coerce.bigint().positive(),
   type: z.enum(["CHECK_IN", "CHECK_OUT"]),
   confidenceScore: z.number().min(0).max(1).optional(),
   livenessScore: z.number().min(0).max(1).optional(),
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest) {
 
   if (
     session.role !== "SAAS_SUPER_ADMIN" &&
-    employee.companyId !== session.companyId
+    employee.companyId.toString() !== session.companyId
   ) {
     return NextResponse.json({ error: "Empleado no encontrado" }, { status: 404 });
   }
@@ -246,11 +247,13 @@ export async function GET(request: NextRequest) {
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
   const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get("pageSize") ?? "20")));
   const employeeId = searchParams.get("employeeId") ?? undefined;
+  const employeeIdBigInt = employeeId ? stringToBigint(employeeId) : undefined;
   const branchId = searchParams.get("branchId") ?? undefined;
+  const branchIdBigInt = branchId ? stringToBigint(branchId) : undefined;
   const date = searchParams.get("date");
 
   const companyId =
-    session.role === "SAAS_SUPER_ADMIN" ? undefined : session.companyId ?? undefined;
+    session.role === "SAAS_SUPER_ADMIN" ? undefined : session.companyId ? BigInt(session.companyId) : undefined;
 
   const dateFilter = date
     ? {
@@ -263,8 +266,8 @@ export async function GET(request: NextRequest) {
     prisma.attendanceRecord.findMany({
       where: {
         ...(companyId ? { companyId } : {}),
-        ...(employeeId ? { employeeId } : {}),
-        ...(branchId ? { branchId } : {}),
+        ...(employeeId ? { employeeId: employeeIdBigInt } : {}),
+        ...(branchId ? { branchId: branchIdBigInt } : {}),
         ...(dateFilter ? { recordedAt: dateFilter } : {}),
       },
       orderBy: { recordedAt: "desc" },
@@ -278,8 +281,8 @@ export async function GET(request: NextRequest) {
     prisma.attendanceRecord.count({
       where: {
         ...(companyId ? { companyId } : {}),
-        ...(employeeId ? { employeeId } : {}),
-        ...(branchId ? { branchId } : {}),
+        ...(employeeId ? { employeeId: employeeIdBigInt } : {}),
+        ...(branchId ? { branchId: branchIdBigInt } : {}),
         ...(dateFilter ? { recordedAt: dateFilter } : {}),
       },
     }),

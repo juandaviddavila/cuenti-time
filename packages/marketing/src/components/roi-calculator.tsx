@@ -33,10 +33,10 @@ function RangeField({
   return (
     <div>
       <div className="mb-3 flex items-end justify-between gap-4">
-        <label htmlFor={id} className="text-sm font-bold text-[#5e5b52]">
+        <label htmlFor={id} className="text-sm font-semibold text-white/60">
           {label}
         </label>
-        <span className="text-lg font-extrabold tracking-[-0.03em]">{displayValue}</span>
+        <span className="text-lg font-bold tracking-[-0.03em] text-white">{displayValue}</span>
       </div>
       <input
         id={id}
@@ -46,7 +46,7 @@ function RangeField({
         step={step}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="range-sun h-2 w-full cursor-pointer"
+        className="range-sun h-1.5 w-full cursor-pointer"
       />
     </div>
   );
@@ -67,29 +67,30 @@ export function RoiCalculator() {
   }, [dailyMinutes, employees, monthlySalary]);
 
   return (
-    <section id="roi" className="bg-[#171714] py-20 text-white md:py-28">
+    <section id="roi" className="relative overflow-hidden border-y border-white/[0.08] bg-[#09151e] py-20 text-white md:py-28">
+      <div className="dot-field absolute inset-0 opacity-20" />
       <div className="page-shell">
-        <div className="grid items-start gap-12 lg:grid-cols-[0.75fr_1.25fr] lg:gap-20">
+        <div className="relative grid items-start gap-12 lg:grid-cols-[0.8fr_1.2fr] lg:gap-20">
           <div className="lg:sticky lg:top-28">
-            <span className="eyebrow !text-[#f9c626]">Haz tus cuentas</span>
+            <span className="eyebrow">Haz tus cuentas</span>
             <h2 className="section-title mt-5 text-balance">
               El tiempo invisible también cuenta.
             </h2>
-            <p className="mt-6 max-w-lg text-lg leading-8 text-white/60">
+            <p className="mt-6 max-w-lg text-lg leading-8 text-white/55">
               Explora cuánto tiempo administrativo podría representar el control manual de
               asistencia. Es una estimación, no una promesa de ahorro.
             </p>
           </div>
 
-          <div className="overflow-hidden rounded-[2rem] bg-[#fffdf7] text-[#171714] shadow-2xl">
+          <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#0d1c26] shadow-[0_30px_90px_-45px_rgba(0,0,0,0.8)]">
             <div className="grid gap-8 p-6 sm:p-9">
               <div className="flex items-center gap-3">
-                <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#f9c626]">
+                <span className="grid h-11 w-11 place-items-center rounded-xl border border-[#55e6c1]/20 bg-[#55e6c1]/10 text-[#55e6c1]">
                   <Calculator className="h-5 w-5" aria-hidden="true" />
                 </span>
                 <div>
-                  <p className="font-extrabold">Calculadora de oportunidad</p>
-                  <p className="text-sm text-[#767269]">Mueve los controles según tu operación.</p>
+                  <p className="font-bold text-white">Calculadora de oportunidad</p>
+                  <p className="text-sm text-white/40">Ajusta los controles según tu operación.</p>
                 </div>
               </div>
 
@@ -125,30 +126,30 @@ export function RoiCalculator() {
               />
             </div>
 
-            <div className="grid gap-px border-t border-black/10 bg-black/10 sm:grid-cols-2">
-              <div className="bg-[#f4f0e6] p-6 sm:p-8">
-                <Clock className="mb-5 h-5 w-5 text-[#8d6b08]" aria-hidden="true" />
-                <p className="text-3xl font-extrabold tracking-[-0.05em]">
+            <div className="grid gap-px border-t border-white/10 bg-white/10 sm:grid-cols-2">
+              <div className="bg-[#0a1720] p-6 sm:p-8">
+                <Clock className="mb-5 h-5 w-5 text-[#55e6c1]" aria-hidden="true" />
+                <p className="text-3xl font-bold tracking-[-0.05em] text-white">
                   {result.monthlyHours} h
                 </p>
-                <p className="mt-2 text-sm leading-6 text-[#68655d]">
+                <p className="mt-2 text-sm leading-6 text-white/45">
                   de gestión manual estimada al mes
                 </p>
               </div>
-              <div className="bg-[#f9c626] p-6 sm:p-8">
-                <p className="text-xs font-extrabold uppercase tracking-[0.14em]">
+              <div className="bg-[#55e6c1] p-6 text-[#061019] sm:p-8">
+                <p className="text-xs font-bold uppercase tracking-[0.14em]">
                   Valor de oportunidad
                 </p>
-                <p className="mt-4 text-3xl font-extrabold tracking-[-0.05em]">
+                <p className="mt-4 text-3xl font-bold tracking-[-0.05em]">
                   {currency.format(result.opportunityValue)}
                 </p>
-                <p className="mt-2 text-sm leading-6 text-black/65">
+                <p className="mt-2 text-sm leading-6 text-[#061019]/65">
                   referencia mensual, no ahorro garantizado
                 </p>
               </div>
             </div>
 
-            <div className="flex gap-3 border-t border-black/10 px-6 py-5 text-xs leading-5 text-[#777269] sm:px-9">
+            <div className="flex gap-3 border-t border-white/10 px-6 py-5 text-xs leading-5 text-white/35 sm:px-9">
               <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
               <p>
                 Supuestos: 22 días laborales al mes y 176 horas laborales mensuales. El cálculo

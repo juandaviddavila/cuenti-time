@@ -1,3 +1,5 @@
+import { getArticleExpansion } from "./article-expansions";
+
 export interface ArticleSource {
   title: string;
   url: string;
@@ -51,7 +53,7 @@ const daneProductivity: ArticleSource = {
   url: "https://www.dane.gov.co/files/operaciones/PTF/bol-PTF-2025.pdf",
 };
 
-export const articles: Article[] = [
+const baseArticles: Article[] = [
   {
     slug: "control-de-tiempo-sin-vigilancia",
     title: "Control de tiempo sin vigilancia: cómo construir confianza con evidencia",
@@ -938,6 +940,34 @@ export const articles: Article[] = [
     ],
   },
 ];
+
+function countArticleWords(article: Article): number {
+  const content = [
+    article.title,
+    article.description,
+    article.answer,
+    ...article.sections.flatMap((section) => [
+      section.heading,
+      ...section.paragraphs,
+      ...(section.bullets ?? []),
+    ]),
+  ].join(" ");
+
+  return content.trim().split(/\s+/u).length;
+}
+
+export const articles: Article[] = baseArticles.map((article) => {
+  const expandedArticle: Article = {
+    ...article,
+    sections: article.sections.concat(getArticleExpansion(article.slug)),
+  };
+  const minutes = Math.max(1, Math.ceil(countArticleWords(expandedArticle) / 190));
+
+  return {
+    ...expandedArticle,
+    readingTime: `${minutes} min`,
+  };
+});
 
 export function getArticleBySlug(slug: string): Article | undefined {
   return articles.find((article) => article.slug === slug);

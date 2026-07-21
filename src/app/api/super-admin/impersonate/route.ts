@@ -7,7 +7,7 @@ import { createAuditLog } from "@/lib/audit";
 import { createAuthenticatedLoginResponse } from "@/lib/login-session";
 
 const impersonateSchema = z.object({
-  companyId: z.string().cuid(),
+  companyId: z.coerce.bigint().positive(),
 });
 
 export async function POST(request: NextRequest) {
@@ -87,6 +87,6 @@ export async function POST(request: NextRequest) {
   });
 
   return createAuthenticatedLoginResponse(targetUser, {
-    impersonatorId: session.userId,
+    impersonatorId: session.userId.toString(),
   });
 }

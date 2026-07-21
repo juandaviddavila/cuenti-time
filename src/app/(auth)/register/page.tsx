@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
@@ -36,6 +36,7 @@ const STEPS = ["Cuenta", "Empresa", "Confirmación"];
 
 export default function RegisterPage() {
   const router = useRouter();
+  const [freeEmployeeLimit, setFreeEmployeeLimit] = useState<number | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [step, setStep] = useState(0);
@@ -45,6 +46,17 @@ export default function RegisterPage() {
     trigger,
     formState: { errors },
   } = useForm<RegisterForm>({ resolver: zodResolver(registerSchema) });
+
+  useEffect(() => {
+    void fetch("/api/billing/config")
+      .then((response) => response.json())
+      .then((json: { data?: { freeEmployeeLimit?: number } }) => {
+        if (typeof json.data?.freeEmployeeLimit === "number") {
+          setFreeEmployeeLimit(json.data.freeEmployeeLimit);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
 
   const nextStep = async () => {
     const fields: Record<number, (keyof RegisterForm)[]> = {
@@ -227,10 +239,13 @@ export default function RegisterPage() {
                 </div>
                 <div className="space-y-2 text-muted-foreground">
                   <p>
-                    <span className="text-foreground">Prueba inicial:</span> 7 días gratis
+                    <span className="text-foreground">Plan inicial:</span> gratis
                   </p>
                   <p className="text-xs">
-                    Incluye 10 empleados. Te enviaremos un código de 6 dígitos a tu correo.
+                    {freeEmployeeLimit === null
+                      ? "Consultando el cupo incluido…"
+                      : `Incluye hasta ${freeEmployeeLimit} empleados.`}{" "}
+                    Te enviaremos un código de 6 dígitos a tu correo.
                   </p>
                 </div>
               </div>

@@ -194,11 +194,12 @@ export async function emitWebhookEvent(params: {
 
 /** Disparo no bloqueante seguro para API routes. */
 export function scheduleWebhookEvent(params: {
-  companyId: string | bigint;
+  companyId: string | bigint | null;
   event: WebhookEventType;
   data: Record<string, unknown>;
 }): void {
-  void emitWebhookEvent(params).catch((err) => {
+  if (params.companyId === null) return;
+  void emitWebhookEvent(params as { companyId: string | bigint; event: WebhookEventType; data: Record<string, unknown> }).catch((err) => {
     logWebhook("error", "emitWebhookEvent falló", {
       companyId: params.companyId,
       event: params.event,

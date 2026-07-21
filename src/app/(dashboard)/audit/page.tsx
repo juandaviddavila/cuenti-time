@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getServerSession, getCompanyFilter } from "@/lib/server-auth";
 import { AuditClient } from "./audit-client";
+import { serializeRecords } from "@/lib/bigint";
 
 interface FilterOption {
   id: string;
@@ -38,9 +39,9 @@ export default async function AuditPage() {
   return (
     <AuditClient
       userRole={session.role}
-      branches={branches}
-      employees={employees.map((e) => ({ id: e.id, name: e.fullName }))}
-      companies={companies}
+      branches={serializeRecords(branches)}
+      employees={employees.map((e) => ({ id: e.id.toString(), name: e.fullName }))}
+       companies={companies.map((company) => ({ id: company.id.toString(), name: company.name }))}
     />
   );
 }

@@ -4,7 +4,6 @@ import type { UserRole } from "@/types/user";
 import type { ServerSession } from "@/lib/server-auth";
 import { getJwtSecret, getJwtRefreshSecret } from "@/lib/server-auth";
 import { resolveEffectiveRole } from "@/lib/super-admin-access";
-import { stringToBigint } from "@/lib/bigint";
 
 export interface TokenPayload {
   userId: string;
@@ -37,8 +36,8 @@ export function payloadToSession(payload: TokenPayload): ServerSession {
   const isImpersonating = Boolean(payload.impersonatorId);
 
   return {
-    userId: stringToBigint(payload.userId),
-    companyId: payload.companyId ? stringToBigint(payload.companyId) : null,
+    userId: payload.userId,
+    companyId: payload.companyId ?? null,
     role: resolveEffectiveRole(payload.email, payload.role, isImpersonating),
     email: payload.email,
     name: payload.name,

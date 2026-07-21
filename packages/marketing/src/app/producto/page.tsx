@@ -9,6 +9,7 @@ import {
   ScanFace,
 } from "lucide-react";
 import { absoluteUrl, siteConfig } from "@/lib/site";
+import { fetchBillingConfig, formatCop, formatUsd } from "@/lib/billing";
 
 export const metadata: Metadata = {
   title: "Producto",
@@ -57,7 +58,9 @@ const modules = [
   },
 ];
 
-export default function ProductPage() {
+export default async function ProductPage() {
+  const billing = await fetchBillingConfig();
+
   return (
     <>
       <section className="overflow-hidden border-b border-black/10 bg-[#171714] py-20 text-white md:py-28">
@@ -77,7 +80,7 @@ export default function ProductPage() {
               href={`${appUrl}/register`}
               className="mt-8 inline-flex items-center gap-2 rounded-full bg-[#f9c626] px-6 py-4 font-extrabold text-[#171714]"
             >
-              Probar durante 7 días <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              Empezar gratis <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </a>
           </div>
         </div>
@@ -178,7 +181,10 @@ export default function ProductPage() {
             Conoce el flujo con tu propio equipo.
           </h2>
           <p className="mx-auto mt-5 max-w-xl text-lg leading-8 text-black/65">
-            Activa una prueba de 7 días con 10 registros faciales incluidos.
+            Empieza gratis con hasta {billing.freeEmployeeLimit} empleados. Si necesitas más,
+            paga {formatCop(billing.priceCopPerEmployeeMonthly)} o{" "}
+            {formatUsd(billing.priceUsdPerEmployeeMonthly)} USD por empleado al mes, con cobro
+            mensual.
           </p>
           <div className="mt-9 flex flex-col justify-center gap-3 sm:flex-row">
             <a

@@ -8,12 +8,13 @@ import {
 import { listToolDefinitions, getTool } from "./tools.js";
 import { McpError as CuentiMcpError } from "./errors.js";
 import type { ToolContext } from "./types.js";
+import { stringToBigint } from "@/lib/bigint";
 import type { ApiTokenContext } from "@/lib/api-token-core";
 
 export function createMcpServer(token: ApiTokenContext): Server {
   const context: ToolContext = {
     token,
-    companyId: token.companyId,
+    companyId: stringToBigint(token.companyId),
   };
 
   const server = new Server(

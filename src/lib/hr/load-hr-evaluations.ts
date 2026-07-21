@@ -1,6 +1,7 @@
 import { startOfDay, endOfDay, eachDayOfInterval } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { getCompanyFilter, type TenantSession } from "@/lib/tenant";
+import { bigintToString, stringToBigint } from "@/lib/bigint";
 import {
   evaluatePeriod,
   filterEvaluationsForReport,
@@ -28,13 +29,13 @@ export interface HrQueryParams {
 
 async function resolveSupervisorBranchId(
   session: TenantSession
-): Promise<string | undefined> {
+): Promise<string | null | undefined> {
   if (session.role !== "BRANCH_SUPERVISOR") return undefined;
   const user = await prisma.user.findUnique({
-    where: { id: session.userId },
+    where: { id: stringToBigint(session.userId) },
     select: { branchId: true },
   });
-  return user?.branchId ?? undefined;
+  return user?.branchId ? bigintToString(user.branchId) : undefined;
 }
 
 export async function loadHrEvaluations(
@@ -66,16 +67,16 @@ export async function loadHrEvaluations(
     where: {
       ...companyFilter,
       status: "ACTIVE",
-      ...(filterEmployeeIds ? { id: { in: filterEmployeeIds } } : {}),
+      ...(filterEmployeeIds ? { id: { in: filterEmployeeIds.map(stringToBigint).filter((v): v is bigint => v !== null && v !== undefined) } } : {}),
       ...(params.positionIds && params.positionIds.length > 0
-        ? { positionId: { in: params.positionIds } }
+        ? { positionId: { in: params.positionIds.map(stringToBigint).filter((v): v is bigint => v !== null && v !== undefined) } }
         : {}),
-      ...(branchId ? { branchId } : {}),
+      ...(branchId ? { branchId: stringToBigint(branchId) } : {}),
       ...(params.shiftId
         ? {
             shifts: {
               some: {
-                shiftId: params.shiftId,
+                shiftId: stringToBigint(params.shiftId),
                 startDate: { lte: end },
                 OR: [{ endDate: null }, { endDate: { gte: start } }],
               },
@@ -117,7 +118,7 @@ export async function loadHrEvaluations(
           where: {
             ...(companyFilter.companyId
               ? { companyId: companyFilter.companyId }
-              : { companyId: { in: companyIds } }),
+              : { companyId: { in: companyIds.length ? companyIds : [-1n] } }),
             date: {
               gte: new Date(start.getTime() - 24 * 60 * 60 * 1000),
               lte: new Date(end.getTime() + 24 * 60 * 60 * 1000),
@@ -148,7 +149,7 @@ export async function loadHrEvaluations(
             employeeId: { in: employeeIds },
             startDate: { lte: end },
             OR: [{ endDate: null }, { endDate: { gte: start } }],
-            ...(params.shiftId ? { shiftId: params.shiftId } : {}),
+            ...(params.shiftId ? { shiftId: stringToBigint(params.shiftId) } : {}),
           },
           select: {
             employeeId: true,
@@ -181,24 +182,24 @@ export async function loadHrEvaluations(
     prisma.company.findMany({
       where:
         session.role === "SAAS_SUPER_ADMIN"
-          ? { id: { in: companyIds.length ? companyIds : ["__none__"] } }
-          : { id: session.companyId ?? "__none__" },
+          ? { id: { in: companyIds.length ? companyIds : [-1n] } }
+          : { id: session.companyId ? stringToBigint(session.companyId) : -1n },
       select: { id: true, lateToleranceMinutes: true, earlyLeaveToleranceMinutes: true },
     }),
   ]);
 
   const shiftAssignments: EmployeeShiftAssignment[] = assignments.map((a) => ({
-    employeeId: a.employeeId,
-    shiftId: a.shiftId,
+    employeeId: bigintToString(a.employeeId),
+    shiftId: bigintToString(a.shiftId),
     startDate: a.startDate,
     endDate: a.endDate,
-    shift: a.shift,
+    shift: { ...a.shift, id: bigintToString(a.shift.id) },
   }));
 
   const novelties: NoveltyInput[] = incidents.map((i) => ({
-    employeeId: i.employeeId,
-    branchId: i.branchId,
-    shiftId: i.shiftId,
+    employeeId: i.employeeId ? bigintToString(i.employeeId) : null,
+    branchId: i.branchId ? bigintToString(i.branchId) : null,
+    shiftId: i.shiftId ? bigintToString(i.shiftId) : null,
     date: i.date,
     overrideStart: i.overrideStart,
     overrideEnd: i.overrideEnd,
@@ -207,27 +208,31 @@ export async function loadHrEvaluations(
   }));
 
   const toleranceByCompany = new Map(
-    companies.map((c) => [c.id, c.lateToleranceMinutes])
+    companies.map((c) => [bigintToString(c.id), c.lateToleranceMinutes])
   );
   const earlyLeaveToleranceByCompany = new Map(
-    companies.map((c) => [c.id, c.earlyLeaveToleranceMinutes])
+    companies.map((c) => [bigintToString(c.id), c.earlyLeaveToleranceMinutes])
   );
 
   const days = eachDayOfInterval({ start: params.from, end: params.to });
 
   let evaluations = evaluatePeriod({
     employees: employees.map((e) => ({
-      id: e.id,
+      id: bigintToString(e.id),
       fullName: e.fullName,
       documentNumber: e.documentNumber,
-      branchId: e.branchId,
+      branchId: bigintToString(e.branchId),
       branchName: e.branch.name,
       positionName: e.position?.name ?? null,
-      companyId: e.companyId,
+      companyId: bigintToString(e.companyId),
     })),
     days,
     assignments: shiftAssignments,
-    records,
+    records: records.map((r) => ({
+      employeeId: bigintToString(r.employeeId),
+      type: r.type,
+      recordedAt: r.recordedAt,
+    })),
     novelties,
     toleranceByCompany,
     earlyLeaveToleranceByCompany,
@@ -250,6 +255,6 @@ export async function loadHrEvaluations(
     employeeSummary: summarizeByEmployee(evaluations),
     branchSummary: summarizeByBranch(evaluations),
     range: { from: start.toISOString(), to: end.toISOString() },
-    forcedBranchId: supervisorBranchId,
+    forcedBranchId: supervisorBranchId ?? undefined,
   };
 }

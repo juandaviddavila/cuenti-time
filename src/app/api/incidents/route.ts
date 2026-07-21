@@ -5,13 +5,14 @@ import { prisma } from "@/lib/prisma";
 import { requireSession, getCompanyFilter } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { scheduleWebhookEvent } from "@/lib/webhooks/dispatch";
+import { stringToBigint, serializeRecord } from "@/lib/bigint";
 
 const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 const incidentSchema = z.object({
-  employeeId: z.string().cuid().optional().nullable(),
-  branchId: z.string().cuid().optional().nullable(),
-  incidentTypeId: z.string().cuid(),
+  employeeId: z.coerce.bigint().positive().nullish(),
+  branchId: z.coerce.bigint().positive().nullish(),
+  incidentTypeId: z.coerce.bigint().positive(),
   date: z.string().datetime(),
   overrideStart: z.string().regex(timePattern).optional().nullable(),
   overrideEnd: z.string().regex(timePattern).optional().nullable(),
@@ -25,7 +26,9 @@ export async function GET(request: NextRequest) {
   const companyFilter = getCompanyFilter(session);
   const { searchParams } = new URL(request.url);
   const employeeId = searchParams.get("employeeId") ?? undefined;
+  const employeeIdBigInt = employeeId ? stringToBigint(employeeId) : undefined;
   const branchId = searchParams.get("branchId") ?? undefined;
+  const branchIdBigInt = branchId ? stringToBigint(branchId) : undefined;
   const date = searchParams.get("date");
 
   const dateFilter = date
@@ -36,8 +39,8 @@ export async function GET(request: NextRequest) {
     const incidents = await prisma.incident.findMany({
       where: {
         ...companyFilter,
-        ...(employeeId ? { employeeId } : {}),
-        ...(branchId ? { branchId } : {}),
+        ...(employeeId ? { employeeId: employeeIdBigInt } : {}),
+        ...(branchId ? { branchId: branchIdBigInt } : {}),
         ...(dateFilter ? { date: dateFilter } : {}),
       },
       orderBy: { date: "desc" },
@@ -71,7 +74,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Debe indicar empleado o sucursal" }, { status: 422 });
   }
 
-  const companyId = session.companyId ?? "";
+  const companyId = session.companyId ? BigInt(session.companyId) : null;
+  if (!companyId) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   if (employeeId) {
     const employee = await prisma.employee.findUnique({ where: { id: employeeId }, select: { companyId: true } });
     if (!employee || (session.role !== "SAAS_SUPER_ADMIN" && employee.companyId !== companyId)) {
@@ -131,7 +137,7 @@ export async function POST(request: NextRequest) {
         incidentType: incident.incidentType,
       },
     });
-    return NextResponse.json(incident, { status: 201 });
+    return NextResponse.json(serializeRecord(incident), { status: 201 });
   } catch (err) {
     console.error("POST /api/incidents error:", err);
     return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });

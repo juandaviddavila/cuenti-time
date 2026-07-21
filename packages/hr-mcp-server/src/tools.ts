@@ -6,6 +6,7 @@ import { parseLocalDateParam } from "@/lib/hr/local-date";
 import type { UserRole } from "@/types/user";
 import type { TenantSession } from "@/lib/tenant";
 import type { ApiTokenContext } from "@/lib/api-token-auth";
+import { stringToBigint, bigintReplacer } from "@/lib/bigint";
 import type { ToolHandler } from "./types.js";
 import {
   hrReportToolSchema,
@@ -39,7 +40,7 @@ function tokenContextToSession(token: ApiTokenContext): TenantSession {
 }
 
 function safeJson(value: unknown): string {
-  return JSON.stringify(value, null, 2);
+  return JSON.stringify(value, bigintReplacer, 2);
 }
 
 /** JSON Schema compatible with ChatGPT/OpenAI MCP (sin $schema 2020-12; defaults no van en required). */
@@ -58,9 +59,10 @@ function parseArgs<T>(schema: z.ZodType<T>, args: unknown): T {
   return result.data;
 }
 
-async function validateBranchId(branchId: string, companyId: string): Promise<void> {
+async function validateBranchId(branchId: string, companyId: bigint): Promise<void> {
+  const id = stringToBigint(branchId);
   const branch = await prisma.branch.findUnique({
-    where: { id: branchId },
+    where: { id },
     select: { companyId: true },
   });
   if (!branch || branch.companyId !== companyId) {
@@ -68,9 +70,10 @@ async function validateBranchId(branchId: string, companyId: string): Promise<vo
   }
 }
 
-async function validateEmployeeId(employeeId: string, companyId: string): Promise<void> {
+async function validateEmployeeId(employeeId: string, companyId: bigint): Promise<void> {
+  const id = stringToBigint(employeeId);
   const employee = await prisma.employee.findUnique({
-    where: { id: employeeId },
+    where: { id },
     select: { companyId: true },
   });
   if (!employee || employee.companyId !== companyId) {
@@ -78,9 +81,10 @@ async function validateEmployeeId(employeeId: string, companyId: string): Promis
   }
 }
 
-async function validateShiftId(shiftId: string, companyId: string): Promise<void> {
+async function validateShiftId(shiftId: string, companyId: bigint): Promise<void> {
+  const id = stringToBigint(shiftId);
   const shift = await prisma.shift.findUnique({
-    where: { id: shiftId },
+    where: { id },
     select: { companyId: true },
   });
   if (!shift || shift.companyId !== companyId) {
@@ -95,9 +99,10 @@ async function runHrReport(
 ) {
   validateDateRange(input.from, input.to);
 
-  if (input.branchId) await validateBranchId(input.branchId, token.companyId);
-  if (input.employeeId) await validateEmployeeId(input.employeeId, token.companyId);
-  if (input.shiftId) await validateShiftId(input.shiftId, token.companyId);
+  const companyId = stringToBigint(token.companyId);
+  if (input.branchId) await validateBranchId(input.branchId, companyId);
+  if (input.employeeId) await validateEmployeeId(input.employeeId, companyId);
+  if (input.shiftId) await validateShiftId(input.shiftId, companyId);
 
   const result = await loadHrEvaluations(tokenContextToSession(token), {
     from: parseLocalDateParam(input.from),
@@ -311,14 +316,16 @@ const getAttendanceRecords: ToolHandler = {
     if (input.branchId) await validateBranchId(input.branchId, ctx.companyId);
     if (input.employeeId) await validateEmployeeId(input.employeeId, ctx.companyId);
 
+    const employeeId = input.employeeId ? stringToBigint(input.employeeId) : undefined;
+    const branchId = input.branchId ? stringToBigint(input.branchId) : undefined;
     const where = {
       companyId: ctx.companyId,
       recordedAt: {
         gte: startOfDay(parseLocalDateParam(input.from)),
         lte: endOfDay(parseLocalDateParam(input.to)),
       },
-      ...(input.employeeId ? { employeeId: input.employeeId } : {}),
-      ...(input.branchId ? { branchId: input.branchId } : {}),
+      ...(employeeId ? { employeeId } : {}),
+      ...(branchId ? { branchId } : {}),
       ...(input.type ? { type: input.type } : {}),
     };
 
@@ -439,6 +446,7 @@ const getPresentNow: ToolHandler = {
     const selectedDate = input.date
       ? parseLocalDateParam(input.date)
       : new Date();
+    const branchId = input.branchId ? stringToBigint(input.branchId) : undefined;
     const records = await prisma.attendanceRecord.findMany({
       where: {
         companyId: ctx.companyId,
@@ -446,7 +454,7 @@ const getPresentNow: ToolHandler = {
           gte: startOfDay(selectedDate),
           lte: endOfDay(selectedDate),
         },
-        ...(input.branchId ? { branchId: input.branchId } : {}),
+        ...(branchId ? { branchId } : {}),
       },
       select: {
         employeeId: true,
@@ -466,7 +474,7 @@ const getPresentNow: ToolHandler = {
       orderBy: { recordedAt: "asc" },
     });
 
-    const lastRecordByEmployee = new Map<string, (typeof records)[number]>();
+    const lastRecordByEmployee = new Map<bigint, (typeof records)[number]>();
     for (const record of records) {
       lastRecordByEmployee.set(record.employeeId, record);
     }
@@ -508,12 +516,13 @@ const listEmployees: ToolHandler = {
     const input = parseArgs(listEmployeesSchema, args);
     if (input.branchId) await validateBranchId(input.branchId, ctx.companyId);
 
+    const branchId = input.branchId ? stringToBigint(input.branchId) : undefined;
     const [employees, total] = await Promise.all([
       prisma.employee.findMany({
         where: {
           companyId: ctx.companyId,
           ...(input.status ? { status: input.status } : {}),
-          ...(input.branchId ? { branchId: input.branchId } : {}),
+          ...(branchId ? { branchId } : {}),
         },
         select: {
           id: true,
@@ -535,7 +544,7 @@ const listEmployees: ToolHandler = {
         where: {
           companyId: ctx.companyId,
           ...(input.status ? { status: input.status } : {}),
-          ...(input.branchId ? { branchId: input.branchId } : {}),
+          ...(branchId ? { branchId } : {}),
         },
       }),
     ]);
@@ -617,7 +626,7 @@ const getCompanyInfo: ToolHandler = {
     });
 
     if (!company) {
-      throw notFound("Empresa", ctx.companyId);
+      throw notFound("Empresa", ctx.companyId.toString());
     }
 
     return {
@@ -644,12 +653,15 @@ const getIncidents: ToolHandler = {
 
     const start = input.from ? parseLocalDateParam(input.from) : undefined;
     const end = input.to ? parseLocalDateParam(input.to) : undefined;
+    const employeeId = input.employeeId ? stringToBigint(input.employeeId) : undefined;
+    const branchId = input.branchId ? stringToBigint(input.branchId) : undefined;
+    const shiftId = input.shiftId ? stringToBigint(input.shiftId) : undefined;
 
     const where = {
       companyId: ctx.companyId,
-      ...(input.employeeId ? { employeeId: input.employeeId } : {}),
-      ...(input.branchId ? { branchId: input.branchId } : {}),
-      ...(input.shiftId ? { shiftId: input.shiftId } : {}),
+      ...(employeeId ? { employeeId } : {}),
+      ...(branchId ? { branchId } : {}),
+      ...(shiftId ? { shiftId } : {}),
       ...(start && end
         ? {
             date: {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession, getCompanyFilter } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import { stringToBigint } from "@/lib/bigint";
 
 const incidentTypeSchema = z.object({
   name: z.string().min(1).max(100),
@@ -49,14 +50,15 @@ export async function POST(request: NextRequest) {
   if (!companyId) return NextResponse.json({ error: "No se pudo determinar la empresa" }, { status: 422 });
 
   try {
-    const type = await prisma.incidentType.create({ data: { companyId, ...parsed.data } });
+    const companyIdBigInt = stringToBigint(companyId);
+    const type = await prisma.incidentType.create({ data: { companyId: companyIdBigInt, ...parsed.data } });
     await createAuditLog({
       request,
       session,
       action: "CREATE",
       entity: "INCIDENT_TYPE",
       entityId: type.id,
-      companyId,
+      companyId: companyIdBigInt,
       newValues: { id: type.id, name: type.name },
     });
     return NextResponse.json(type, { status: 201 });

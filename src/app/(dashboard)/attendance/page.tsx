@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession, getCompanyFilter } from "@/lib/server-auth";
 import { AttendanceClient } from "./attendance-client";
 import { startOfDay, endOfDay } from "date-fns";
+import { serializeRecords } from "@/lib/bigint";
 
 export default async function AttendancePage() {
   const session = await getServerSession();
@@ -68,7 +69,7 @@ export default async function AttendancePage() {
   return (
     <AttendanceClient
       userRole={session.role}
-      records={records.map((r) => ({
+      records={serializeRecords(records.map((r) => ({
         id: r.id,
         employeeName: r.employee.fullName,
         employeePhoto: r.employee.photo ?? undefined,
@@ -80,7 +81,7 @@ export default async function AttendancePage() {
         confidenceScore: r.confidenceScore ?? undefined,
         isManual: r.isManual,
         notes: r.notes ?? undefined,
-      }))}
+      })))}
       stats={{
         checkInsToday,
         checkOutsToday,

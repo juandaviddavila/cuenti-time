@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { stringToBigint } from "@/lib/bigint";
 import {
   calculateMaxEmployeesFromPlan,
   type BillingCycle,
@@ -18,7 +19,7 @@ function addYears(date: Date, years: number): Date {
 
 export async function applyApprovedPayment(paymentId: string): Promise<void> {
   const payment = await prisma.payment.findUnique({
-    where: { id: paymentId },
+    where: { id: stringToBigint(paymentId) },
     include: { company: { select: { subscriptionExpiresAt: true, maxEmployees: true } } },
   });
 

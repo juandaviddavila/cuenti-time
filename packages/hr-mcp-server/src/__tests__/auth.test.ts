@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { authenticateMcpToken } from "../auth.js";
 import { prisma } from "@/lib/prisma";
 import { createTestToken, cleanupTestToken, type TestToken } from "./helpers.js";
+import { stringToBigint } from "@/lib/bigint";
 
 describe("authenticateMcpToken", () => {
   let testToken: TestToken;
@@ -34,7 +35,7 @@ describe("authenticateMcpToken", () => {
     const hashed = await bcrypt.hash(rawToken, 12);
     const inactive = await prisma.apiToken.create({
       data: {
-        companyId: testToken.companyId,
+        companyId: stringToBigint(testToken.companyId),
         name: "Inactive Test Token",
         token: hashed,
         tokenPrefix: rawToken.slice(0, 16),
@@ -53,7 +54,7 @@ describe("authenticateMcpToken", () => {
     const hashed = await bcrypt.hash(rawToken, 12);
     const writeOnly = await prisma.apiToken.create({
       data: {
-        companyId: testToken.companyId,
+        companyId: stringToBigint(testToken.companyId),
         name: "Write-Only Test Token",
         token: hashed,
         tokenPrefix: rawToken.slice(0, 16),

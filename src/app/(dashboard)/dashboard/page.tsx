@@ -5,6 +5,7 @@ import { DashboardClient } from "./dashboard-client";
 import { subDays, startOfDay, endOfDay, format } from "date-fns";
 import { es } from "date-fns/locale";
 import { loadHrEvaluations } from "@/lib/hr/load-hr-evaluations";
+import { serializeRecords } from "@/lib/bigint";
 
 export default async function DashboardPage() {
   // ── Auth guard ─────────────────────────────────────────────────────────────
@@ -29,7 +30,7 @@ export default async function DashboardPage() {
     session.role === "SAAS_SUPER_ADMIN"
       ? prisma.company.count({ where: { status: "ACTIVE" } })
       : prisma.company.count({
-          where: { id: session.companyId ?? "__none__", status: "ACTIVE" },
+           where: { id: session.companyId ? BigInt(session.companyId) : -1n, status: "ACTIVE" },
         }),
 
     prisma.branch.count({ where: { ...companyFilter, status: "ACTIVE" } }),
@@ -98,7 +99,7 @@ export default async function DashboardPage() {
   // Build a map of employeeId → last record type
   const lastTypeByEmployee = new Map<string, string>();
   for (const record of todayCheckIns) {
-    lastTypeByEmployee.set(record.employeeId, record.type);
+    lastTypeByEmployee.set(record.employeeId.toString(), record.type);
   }
   const presentToday = Array.from(lastTypeByEmployee.values()).filter(
     (t) => t === "CHECK_IN"
@@ -170,7 +171,7 @@ export default async function DashboardPage() {
     <DashboardClient
       stats={stats}
       weeklyData={weeklyData}
-      recentAttendance={recentAttendance.map((r) => ({
+      recentAttendance={serializeRecords(recentAttendance.map((r) => ({
         id: r.id,
         employeeName: r.employee.fullName,
         employeePhoto: r.employee.photo,
@@ -179,7 +180,7 @@ export default async function DashboardPage() {
         recordedAt: r.recordedAt.toISOString(),
         validationStatus: r.validationStatus,
         confidenceScore: r.confidenceScore,
-      }))}
+      })))}
       dailyQuickReport={dailyQuickReport}
       userRole={session.role}
     />

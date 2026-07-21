@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
       where: { id: payment.id },
       data: { wompiSignature: transaction.id },
     });
-    await applyApprovedPayment(payment.id);
+    await applyApprovedPayment(payment.id.toString());
   } else if (transaction.status === "DECLINED" || transaction.status === "ERROR") {
     await prisma.payment.update({
       where: { id: payment.id },

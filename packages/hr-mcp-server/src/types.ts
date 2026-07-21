@@ -2,7 +2,7 @@ import type { ApiTokenContext } from "@/lib/api-token-core";
 
 export interface ToolContext {
   token: ApiTokenContext;
-  companyId: string;
+  companyId: bigint;
 }
 
 export interface ToolHandler {

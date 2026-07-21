@@ -13,11 +13,13 @@ import {
 } from "@/lib/user-permissions";
 import { extractTokenPayload, payloadToSession } from "@/lib/session-tokens";
 import { getCompanyFilter, type TenantSession } from "@/lib/tenant";
+import { requirePaidActivePlan } from "@/lib/subscription";
 import type { UserRole } from "@/types/user";
+import { stringToBigint } from "@/lib/bigint";
 
 export interface ServerSession extends TenantSession {
-  userId: bigint;
-  companyId: bigint | null;
+  userId: string;
+  companyId: string | null;
   role: UserRole;
   email: string;
   name: string;
@@ -100,10 +102,10 @@ export function getJwtRefreshSecret(): Uint8Array {
 }
 
 export async function getUserPermissionFields(
-  userId: bigint
+  userId: string
 ): Promise<UserPermissionFields | null> {
   const user = await prisma.user.findUnique({
-    where: { id: userId },
+    where: { id: stringToBigint(userId) },
     select: {
       role: true,
       bypassGeofence: true,
@@ -127,10 +129,19 @@ export async function requireIntegrationAccess(
       headers: { "Content-Type": "application/json" },
     });
   }
+
+  const paid = await requirePaidActivePlan(session);
+  if (!paid.ok) {
+    throw new Response(JSON.stringify({ error: paid.error, code: paid.code }), {
+      status: paid.status,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   return effectivePermissions;
 }
 
-export async function userBypassesGeofence(userId: bigint): Promise<boolean> {
+export async function userBypassesGeofence(userId: string): Promise<boolean> {
   const permissions = await getUserPermissionFields(userId);
   return permissions ? bypassesGeofence(permissions) : false;
 }

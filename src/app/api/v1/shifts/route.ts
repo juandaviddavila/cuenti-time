@@ -4,6 +4,7 @@ import {
   requireApiToken,
 } from "@/lib/api-token-auth";
 import { prisma } from "@/lib/prisma";
+import { stringToBigint } from "@/lib/bigint";
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiToken(request, "read");
@@ -15,8 +16,7 @@ export async function GET(request: NextRequest) {
     activeParam === null ? true : activeParam === "true" || activeParam === "1";
 
   const shifts = await prisma.shift.findMany({
-    where: {
-      companyId: auth.companyId,
+    where: { companyId: stringToBigint(auth.companyId),
       ...(activeParam === "all" ? {} : { active }),
     },
     orderBy: { name: "asc" },

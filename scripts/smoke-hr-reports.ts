@@ -13,6 +13,7 @@ import {
   type HrReportKind,
 } from "../src/lib/hr/day-evaluation";
 import type { EmployeeShiftAssignment } from "../src/lib/shift-schedule";
+import { bigintToString } from "../src/lib/bigint";
 import { eachDayOfInterval } from "date-fns";
 
 const prisma = new PrismaClient();
@@ -115,17 +116,17 @@ async function main() {
   ]);
 
   const shiftAssignments: EmployeeShiftAssignment[] = assignments.map((a) => ({
-    employeeId: a.employeeId,
-    shiftId: a.shiftId,
+    employeeId: bigintToString(a.employeeId),
+    shiftId: bigintToString(a.shiftId),
     startDate: a.startDate,
     endDate: a.endDate,
-    shift: a.shift,
+    shift: { ...a.shift, id: bigintToString(a.shift.id) },
   }));
 
   const novelties: NoveltyInput[] = incidents.map((i) => ({
-    employeeId: i.employeeId,
-    branchId: i.branchId,
-    shiftId: i.shiftId,
+    employeeId: i.employeeId ? bigintToString(i.employeeId) : null,
+    branchId: i.branchId ? bigintToString(i.branchId) : null,
+    shiftId: i.shiftId ? bigintToString(i.shiftId) : null,
     date: i.date,
     overrideStart: i.overrideStart,
     overrideEnd: i.overrideEnd,
@@ -136,19 +137,19 @@ async function main() {
   const days = eachDayOfInterval({ start: from, end: new Date(2026, 6, 20) });
   const evaluations = evaluatePeriod({
     employees: employees.map((e) => ({
-      id: e.id,
+      id: bigintToString(e.id),
       fullName: e.fullName,
       documentNumber: e.documentNumber,
-      branchId: e.branchId,
+      branchId: bigintToString(e.branchId),
       branchName: e.branch.name,
       positionName: e.position?.name ?? null,
-      companyId: e.companyId,
+      companyId: bigintToString(e.companyId),
     })),
     days,
     assignments: shiftAssignments,
-    records,
+    records: records.map((r) => ({ ...r, employeeId: bigintToString(r.employeeId) })),
     novelties,
-    toleranceByCompany: new Map([[company.id, company.lateToleranceMinutes]]),
+    toleranceByCompany: new Map([[bigintToString(company.id), company.lateToleranceMinutes]]),
   });
 
   const kinds: HrReportKind[] = [

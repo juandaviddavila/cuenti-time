@@ -4,13 +4,14 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { scheduleWebhookEvent } from "@/lib/webhooks/dispatch";
+import { stringToBigint } from "@/lib/bigint";
 
 const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 const updateIncidentSchema = z.object({
-  employeeId: z.string().cuid().optional().nullable(),
-  branchId: z.string().cuid().optional().nullable(),
-  incidentTypeId: z.string().cuid().optional(),
+  employeeId: z.coerce.bigint().positive().nullish(),
+  branchId: z.coerce.bigint().positive().nullish(),
+  incidentTypeId: z.coerce.bigint().positive().optional(),
   date: z.string().datetime().optional(),
   overrideStart: z.string().regex(timePattern).optional().nullable(),
   overrideEnd: z.string().regex(timePattern).optional().nullable(),
@@ -19,21 +20,21 @@ const updateIncidentSchema = z.object({
 
 type RouteParams = { params: { id: string } };
 
-async function getIncidentIfAllowed(id: string, session: Awaited<ReturnType<typeof requireSession>>) {
+async function getIncidentIfAllowed(id: bigint, session: Awaited<ReturnType<typeof requireSession>>) {
   const incident = await prisma.incident.findUnique({
     where: { id },
     include: { employee: { select: { companyId: true } }, branch: { select: { companyId: true } } },
   });
   if (!incident) return null;
   const companyId = incident.employee?.companyId ?? incident.branch?.companyId ?? incident.companyId;
-  if (session.role !== "SAAS_SUPER_ADMIN" && companyId !== session.companyId) return null;
+  if (session.role !== "SAAS_SUPER_ADMIN" && companyId.toString() !== session.companyId) return null;
   return incident;
 }
 
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   let session;
   try { session = await requireSession(); } catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401 }); }
-  const incident = await getIncidentIfAllowed(params.id, session);
+  const incident = await getIncidentIfAllowed(stringToBigint(params.id), session);
   if (!incident) return NextResponse.json({ error: "Novedad no encontrada" }, { status: 404 });
   return NextResponse.json(incident);
 }
@@ -48,7 +49,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   try { body = await request.json(); } catch { return NextResponse.json({ error: "Cuerpo inválido" }, { status: 400 }); }
   const parsed = updateIncidentSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors }, { status: 400 });
-  const incident = await getIncidentIfAllowed(params.id, session);
+  const incident = await getIncidentIfAllowed(stringToBigint(params.id), session);
   if (!incident) return NextResponse.json({ error: "Novedad no encontrada" }, { status: 404 });
 
   const data: Record<string, unknown> = {};
@@ -62,7 +63,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
   try {
     const updated = await prisma.incident.update({
-      where: { id: params.id },
+      where: { id: stringToBigint(params.id) },
       data,
       include: {
         employee: { select: { id: true, fullName: true } },
@@ -108,10 +109,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   if (session.role !== "SAAS_SUPER_ADMIN" && session.role !== "COMPANY_ADMIN" && session.role !== "BRANCH_SUPERVISOR") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const incident = await getIncidentIfAllowed(params.id, session);
+  const incident = await getIncidentIfAllowed(stringToBigint(params.id), session);
   if (!incident) return NextResponse.json({ error: "Novedad no encontrada" }, { status: 404 });
   try {
-    await prisma.incident.delete({ where: { id: params.id } });
+    await prisma.incident.delete({ where: { id: stringToBigint(params.id) } });
     await createAuditLog({
       request,
       session,
