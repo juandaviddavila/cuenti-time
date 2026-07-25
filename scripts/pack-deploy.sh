@@ -102,11 +102,23 @@ if [ "${#missing_artifacts[@]}" -gt 0 ]; then
   exit 1
 fi
 
-if grep -rqE 'localhost:7578' .next/static/chunks/ 2>/dev/null; then
-  echo ""
-  echo "ADVERTENCIA: el bundle SaaS aún contiene localhost:7578."
-  echo "Revisa .env.production.local (NEXT_PUBLIC_APP_URL)."
-  exit 1
+# Validar que la URL de producción quedó embebida.
+# No fallar por menciones de localhost en textos de ayuda (p.ej. Google Maps API key).
+PROD_APP_HOST="$(
+  grep -E '^NEXT_PUBLIC_APP_URL=' "$APP_PROD_ENV" | head -1 | cut -d= -f2- \
+    | tr -d '"' | sed -E 's#https?://##' | cut -d/ -f1
+)"
+if [ -n "$PROD_APP_HOST" ] && [[ "$PROD_APP_HOST" != localhost* ]] && [[ "$PROD_APP_HOST" != 127.0.0.1* ]]; then
+  if ! grep -rqF "$PROD_APP_HOST" .next/static/chunks/ 2>/dev/null; then
+    echo ""
+    echo "Error: el bundle SaaS no contiene la URL de producción ($PROD_APP_HOST)."
+    echo "Revisa .env.production.local y vuelve a compilar."
+    exit 1
+  fi
+  echo "==> Bundle SaaS incluye $PROD_APP_HOST (OK)"
+fi
+if grep -rqE 'https?://localhost:7578' .next/static/chunks/ 2>/dev/null; then
+  echo "aviso: el bundle menciona localhost:7578 (texto de ayuda). No bloquea el pack."
 fi
 
 OUTPUT="${1:-$ROOT/deploy.tar.gz}"
