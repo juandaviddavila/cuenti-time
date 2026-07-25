@@ -14,6 +14,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { getInitials } from "@/lib/utils";
+import { canAccessSettings } from "@/lib/post-login-path";
 import Link from "next/link";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 
@@ -129,9 +130,11 @@ export function Header({ title, alertCount = 0 }: HeaderProps) {
               <DropdownMenuItem asChild>
                 <Link href="/profile">Mi perfil</Link>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href="/settings">Configuración</Link>
-              </DropdownMenuItem>
+              {canAccessSettings(user?.role) && (
+                <DropdownMenuItem asChild>
+                  <Link href="/settings">Configuración</Link>
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

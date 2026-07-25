@@ -132,6 +132,14 @@ const createUserSchema = z.object({
 });
 
 const editUserSchema = z.object({
+  role: z.enum([
+    "COMPANY_ADMIN",
+    "BRANCH_SUPERVISOR",
+    "FACE_REGISTRAR",
+    "REPORT_VIEWER",
+    "DEVELOPER",
+  ] as const),
+  branchId: z.string().regex(/^\d+$/, "ID de sucursal inválido").optional().or(z.literal("")),
   bypassGeofence: z.boolean(),
   canManageIntegrations: z.boolean(),
 });
@@ -176,6 +184,8 @@ export function UsersClient({
   const editForm = useForm<EditUserFormValues>({
     resolver: zodResolver(editUserSchema),
     defaultValues: {
+      role: "REPORT_VIEWER",
+      branchId: "",
       bypassGeofence: false,
       canManageIntegrations: false,
     },
@@ -206,12 +216,20 @@ export function UsersClient({
 
   function openEdit(user: UserRow) {
     setEditingUser(user);
+    const editableRole = AVAILABLE_ROLES.some((r) => r.value === user.role)
+      ? (user.role as EditUserFormValues["role"])
+      : "REPORT_VIEWER";
     editForm.reset({
+      role: editableRole,
+      branchId: user.branchId ?? "",
       bypassGeofence: user.bypassGeofence ?? false,
       canManageIntegrations: user.canManageIntegrations ?? false,
     });
     setEditDialogOpen(true);
   }
+
+  const canEditRole =
+    !!editingUser && AVAILABLE_ROLES.some((r) => r.value === editingUser.role);
 
   async function onSubmit(values: CreateUserFormValues) {
     setIsSubmitting(true);
@@ -255,17 +273,22 @@ export function UsersClient({
       const res = await fetch(`/api/users/${editingUser.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
+        body: JSON.stringify({
+          ...(canEditRole ? { role: values.role } : {}),
+          branchId: values.branchId?.trim() ? values.branchId : null,
+          bypassGeofence: values.bypassGeofence,
+          canManageIntegrations: values.canManageIntegrations,
+        }),
       });
       if (!res.ok) {
         const err = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(err.error ?? "Error al actualizar permisos");
+        throw new Error(err.error ?? "Error al actualizar usuario");
       }
       const updated = (await res.json()) as UserRow;
       setUsers((prev) =>
         prev.map((u) => (u.id === updated.id ? { ...u, ...updated } : u))
       );
-      toast.success("Permisos actualizados");
+      toast.success("Usuario actualizado");
       setEditDialogOpen(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error inesperado");
@@ -599,13 +622,81 @@ export function UsersClient({
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Permisos de {editingUser?.name}</DialogTitle>
+            <DialogTitle>Editar {editingUser?.name}</DialogTitle>
           </DialogHeader>
           <Form {...editForm}>
             <form
               onSubmit={editForm.handleSubmit(onEditPermissions)}
               className="space-y-4"
             >
+              <FormField
+                control={editForm.control}
+                name="role"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Rol</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      value={field.value}
+                      disabled={!canEditRole}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {AVAILABLE_ROLES.map((r) => (
+                          <SelectItem key={r.value} value={r.value}>
+                            {r.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {!canEditRole && (
+                      <FormDescription>
+                        Este rol no se puede cambiar desde aquí (p. ej. super admin).
+                      </FormDescription>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              {branches.length > 0 && (
+                <FormField
+                  control={editForm.control}
+                  name="branchId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        Sucursal{" "}
+                        <span className="text-muted-foreground font-normal">
+                          (opcional)
+                        </span>
+                      </FormLabel>
+                      <Select
+                        onValueChange={(v) => field.onChange(v === "none" ? "" : v)}
+                        value={field.value || "none"}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Sin sucursal asignada" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="none">Sin sucursal</SelectItem>
+                          {branches.map((b) => (
+                            <SelectItem key={b.id} value={b.id}>
+                              {b.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
               <FormField
                 control={editForm.control}
                 name="bypassGeofence"
@@ -655,7 +746,7 @@ export function UsersClient({
                   Cancelar
                 </Button>
                 <Button type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? "Guardando..." : "Guardar permisos"}
+                  {isSubmitting ? "Guardando..." : "Guardar cambios"}
                 </Button>
               </DialogFooter>
             </form>

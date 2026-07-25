@@ -10,7 +10,7 @@ import {
   FileText,
   Loader2,
 } from "lucide-react";
-import { format, startOfMonth, endOfMonth, subDays } from "date-fns";
+import { format, startOfMonth, subDays } from "date-fns";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -44,11 +44,37 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 import type { DayOutcome, HrReportKind } from "@/lib/hr/day-evaluation";
+import { DAY_OUTCOME_LABELS } from "@/lib/hr/day-evaluation";
 import {
   EMPTY_REPORT_MESSAGES,
   getReportBySlug,
 } from "@/lib/hr/report-catalog";
+
+const DAY_OUTCOME_OPTIONS = (
+  Object.entries(DAY_OUTCOME_LABELS) as [DayOutcome, string][]
+).map(([value, label]) => ({ value, label }));
+
+type NoveltyFilter = "all" | "with" | "without";
+
+function employeeHasNovelty(r: {
+  noveltyDays?: number;
+  absentDays: number;
+  justifiedAbsenceDays: number;
+  lateDays: number;
+  earlyLeaveDays: number;
+  openDays: number;
+}): boolean {
+  return (
+    (r.noveltyDays ?? 0) > 0 ||
+    r.absentDays > 0 ||
+    r.justifiedAbsenceDays > 0 ||
+    r.lateDays > 0 ||
+    r.earlyLeaveDays > 0 ||
+    r.openDays > 0
+  );
+}
 
 interface FilterOption {
   id: string;
@@ -97,6 +123,7 @@ interface EmployeeSummaryRow {
   lateDays: number;
   earlyLeaveDays: number;
   openDays: number;
+  noveltyDays?: number;
   totalLateMinutes: number;
   totalEarlyLeaveMinutes: number;
   punctualityRate: number;
@@ -171,10 +198,22 @@ export function ReportViewer(props: ReportViewerProps) {
   return <ReportViewerBody {...props} report={report} />;
 }
 
+function todayDateKey(): string {
+  return format(new Date(), "yyyy-MM-dd");
+}
+
+/** No permitir fechas futuras en el rango de informes. */
+function clampToToday(dateStr: string): string {
+  if (!dateStr) return dateStr;
+  const max = todayDateKey();
+  return dateStr > max ? max : dateStr;
+}
+
 function defaultRangeForKind(kind: HrReportKind): { from: string; to: string } {
   const today = new Date();
+  const todayStr = format(today, "yyyy-MM-dd");
   // Informes operativos día a día: mismo rango que el diario (hoy).
-  // Resúmenes: mes calendario.
+  // Resúmenes: mes calendario hasta hoy.
   if (
     kind === "daily" ||
     kind === "absences" ||
@@ -182,12 +221,11 @@ function defaultRangeForKind(kind: HrReportKind): { from: string; to: string } {
     kind === "early_leaves" ||
     kind === "open_days"
   ) {
-    const d = format(today, "yyyy-MM-dd");
-    return { from: d, to: d };
+    return { from: todayStr, to: todayStr };
   }
   return {
     from: format(startOfMonth(today), "yyyy-MM-dd"),
-    to: format(endOfMonth(today), "yyyy-MM-dd"),
+    to: todayStr,
   };
 }
 
@@ -210,6 +248,8 @@ function ReportViewerBody({
   const [shiftId, setShiftId] = useState("all");
   const [onlyUnjustified, setOnlyUnjustified] = useState(false);
   const [includeJustified, setIncludeJustified] = useState(true);
+  const [outcomes, setOutcomes] = useState<string[]>([]);
+  const [noveltyFilter, setNoveltyFilter] = useState<NoveltyFilter>("all");
   const [loading, setLoading] = useState(true);
   const [dayRows, setDayRows] = useState<DayRow[]>([]);
   const [employeeRows, setEmployeeRows] = useState<EmployeeSummaryRow[]>([]);
@@ -227,6 +267,22 @@ function ReportViewerBody({
       return true;
     });
   }, [employees, branchId, positionIds]);
+
+  /** Diario operativo: filtrar por estado(s) de jornada. */
+  const visibleDayRows = useMemo(() => {
+    if (kind !== "daily" || outcomes.length === 0) return dayRows;
+    const allowed = new Set(outcomes);
+    return dayRows.filter((r) => allowed.has(r.outcome));
+  }, [dayRows, kind, outcomes]);
+
+  /** Resumen por empleado: con / sin novedad. */
+  const visibleEmployeeRows = useMemo(() => {
+    if (kind !== "employee_summary" || noveltyFilter === "all") return employeeRows;
+    return employeeRows.filter((r) => {
+      const has = employeeHasNovelty(r);
+      return noveltyFilter === "with" ? has : !has;
+    });
+  }, [employeeRows, kind, noveltyFilter]);
 
   useEffect(() => {
     const allowed = new Set(filteredEmployees.map((e) => e.id));
@@ -310,14 +366,14 @@ function ReportViewerBody({
     const end = new Date();
     const start = subDays(end, days - 1);
     setFrom(format(start, "yyyy-MM-dd"));
-    setTo(format(end, "yyyy-MM-dd"));
+    setTo(todayDateKey());
   }
 
   function exportExcel() {
     let sheetData: Record<string, unknown>[] = [];
 
     if (kind === "employee_summary") {
-      sheetData = employeeRows.map((r) => ({
+      sheetData = visibleEmployeeRows.map((r) => ({
         Empleado: r.employeeName,
         Documento: r.documentNumber,
         Sucursal: r.branchName,
@@ -330,6 +386,7 @@ function ReportViewerBody({
         "Salidas anticipadas": r.earlyLeaveDays,
         "Min. anticipados": r.totalEarlyLeaveMinutes,
         "Sin salida": r.openDays,
+        "Días con novedad": r.noveltyDays ?? 0,
         "% puntualidad": r.punctualityRate,
       }));
     } else if (kind === "branch_summary") {
@@ -346,7 +403,7 @@ function ReportViewerBody({
         "% puntualidad": r.punctualityRate,
       }));
     } else {
-      sheetData = dayRows.map((r) => ({
+      sheetData = visibleDayRows.map((r) => ({
         Fecha: r.date,
         Día: r.dayName,
         Empleado: r.employeeName,
@@ -397,10 +454,11 @@ function ReportViewerBody({
           "Justif.",
           "Tarde",
           "Min tarde",
+          "Noved.",
           "% punt.",
         ],
       ];
-      body = employeeRows.map((r) => [
+      body = visibleEmployeeRows.map((r) => [
         r.employeeName,
         r.branchName,
         String(r.workDays),
@@ -409,6 +467,7 @@ function ReportViewerBody({
         String(r.justifiedAbsenceDays),
         String(r.lateDays),
         String(r.totalLateMinutes),
+        String(r.noveltyDays ?? 0),
         `${r.punctualityRate}%`,
       ]);
     } else if (kind === "branch_summary") {
@@ -434,7 +493,7 @@ function ReportViewerBody({
       ]);
     } else {
       head = [["Fecha", "Empleado", "Esperado", "Real", "Min", "Estado", "Novedad"]];
-      body = dayRows.map((r) => {
+      body = visibleDayRows.map((r) => {
         const expected = [r.scheduledStart, r.scheduledEnd]
           .filter(Boolean)
           .join("–");
@@ -472,10 +531,10 @@ function ReportViewerBody({
 
   const isEmpty =
     kind === "employee_summary"
-      ? employeeRows.length === 0
+      ? visibleEmployeeRows.length === 0
       : kind === "branch_summary"
         ? branchRows.length === 0
-        : dayRows.length === 0;
+        : visibleDayRows.length === 0;
 
   const Icon = report.icon;
 
@@ -550,7 +609,7 @@ function ReportViewerBody({
               onClick={() => {
                 const now = new Date();
                 setFrom(format(startOfMonth(now), "yyyy-MM-dd"));
-                setTo(format(endOfMonth(now), "yyyy-MM-dd"));
+                setTo(todayDateKey());
               }}
             >
               Este mes
@@ -563,7 +622,8 @@ function ReportViewerBody({
                 id="from"
                 type="date"
                 value={from}
-                onChange={(e) => setFrom(e.target.value)}
+                max={todayDateKey()}
+                onChange={(e) => setFrom(clampToToday(e.target.value))}
               />
             </div>
             <div className="space-y-1.5">
@@ -572,7 +632,8 @@ function ReportViewerBody({
                 id="to"
                 type="date"
                 value={to}
-                onChange={(e) => setTo(e.target.value)}
+                max={todayDateKey()}
+                onChange={(e) => setTo(clampToToday(e.target.value))}
               />
             </div>
             <div className="space-y-1.5">
@@ -643,6 +704,38 @@ function ReportViewerBody({
                 </SelectContent>
               </Select>
             </div>
+            {kind === "daily" && (
+              <div className="space-y-1.5">
+                <Label>Estado</Label>
+                <SearchableSelect
+                  multiple
+                  value={outcomes}
+                  onValueChange={setOutcomes}
+                  placeholder="Todos"
+                  allLabel="Todos"
+                  searchPlaceholder="Buscar estado..."
+                  options={DAY_OUTCOME_OPTIONS}
+                />
+              </div>
+            )}
+            {kind === "employee_summary" && (
+              <div className="space-y-1.5">
+                <Label>Novedad</Label>
+                <Select
+                  value={noveltyFilter}
+                  onValueChange={(v) => setNoveltyFilter(v as NoveltyFilter)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Todos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    <SelectItem value="with">Con novedad</SelectItem>
+                    <SelectItem value="without">Sin novedad</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
           {kind === "absences" && (
             <div className="flex flex-wrap gap-6">
@@ -678,45 +771,85 @@ function ReportViewerBody({
           description="Prueba ampliando el rango de fechas o quitando filtros."
         />
       ) : kind === "employee_summary" ? (
-        <div className="rounded-lg border overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Empleado</TableHead>
-                <TableHead>Sucursal</TableHead>
-                <TableHead className="text-right">Laborales</TableHead>
-                <TableHead className="text-right">Presentes</TableHead>
-                <TableHead className="text-right">Ausentes</TableHead>
-                <TableHead className="text-right">Justif.</TableHead>
-                <TableHead className="text-right">Tardanzas</TableHead>
-                <TableHead className="text-right">Min. tarde</TableHead>
-                <TableHead className="text-right">Sal. ant.</TableHead>
-                <TableHead className="text-right">% puntualidad</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {employeeRows.map((r) => (
-                <TableRow key={r.employeeId}>
-                  <TableCell className="font-medium">{r.employeeName}</TableCell>
-                  <TableCell>{r.branchName}</TableCell>
-                  <TableCell className="text-right">{r.workDays}</TableCell>
-                  <TableCell className="text-right">{r.presentDays}</TableCell>
-                  <TableCell className="text-right">{r.absentDays}</TableCell>
-                  <TableCell className="text-right">
-                    {r.justifiedAbsenceDays}
-                  </TableCell>
-                  <TableCell className="text-right">{r.lateDays}</TableCell>
-                  <TableCell className="text-right">
-                    {r.totalLateMinutes}
-                  </TableCell>
-                  <TableCell className="text-right">{r.earlyLeaveDays}</TableCell>
-                  <TableCell className="text-right">
-                    {r.punctualityRate}%
-                  </TableCell>
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Las filas en rojo indican empleados con ausencias, tardanzas, salidas anticipadas u otras novedades en el período.
+          </p>
+          <div className="rounded-lg border overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Empleado</TableHead>
+                  <TableHead>Sucursal</TableHead>
+                  <TableHead className="text-right">Laborales</TableHead>
+                  <TableHead className="text-right">Presentes</TableHead>
+                  <TableHead className="text-right">Ausentes</TableHead>
+                  <TableHead className="text-right">Justif.</TableHead>
+                  <TableHead className="text-right">Tardanzas</TableHead>
+                  <TableHead className="text-right">Min. tarde</TableHead>
+                  <TableHead className="text-right">Sal. ant.</TableHead>
+                  <TableHead className="text-right">Novedades</TableHead>
+                  <TableHead className="text-right">% puntualidad</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {visibleEmployeeRows.map((r) => {
+                  const hasNovelty = employeeHasNovelty(r);
+                  return (
+                    <TableRow
+                      key={r.employeeId}
+                      className={cn(
+                        hasNovelty &&
+                          "bg-red-100/80 hover:bg-red-200/80 border-l-4 border-l-red-500 dark:bg-red-950/55 dark:hover:bg-red-900/50"
+                      )}
+                    >
+                      <TableCell
+                        className={cn(
+                          "font-medium",
+                          hasNovelty && "text-red-700 dark:text-red-300"
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span>{r.employeeName}</span>
+                          {hasNovelty && (
+                            <Badge
+                              variant="destructive"
+                              className="text-[10px] px-1.5 py-0 font-normal"
+                            >
+                              Novedad
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>{r.branchName}</TableCell>
+                      <TableCell className="text-right">{r.workDays}</TableCell>
+                      <TableCell className="text-right">{r.presentDays}</TableCell>
+                      <TableCell className="text-right">{r.absentDays}</TableCell>
+                      <TableCell className="text-right">
+                        {r.justifiedAbsenceDays}
+                      </TableCell>
+                      <TableCell className="text-right">{r.lateDays}</TableCell>
+                      <TableCell className="text-right">
+                        {r.totalLateMinutes}
+                      </TableCell>
+                      <TableCell className="text-right">{r.earlyLeaveDays}</TableCell>
+                      <TableCell
+                        className={cn(
+                          "text-right tabular-nums",
+                          hasNovelty && "font-semibold text-red-700 dark:text-red-300"
+                        )}
+                      >
+                        {r.noveltyDays ?? 0}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {r.punctualityRate}%
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
         </div>
       ) : kind === "branch_summary" ? (
         <div className="rounded-lg border overflow-hidden">
@@ -775,7 +908,7 @@ function ReportViewerBody({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {dayRows.map((r) => (
+              {visibleDayRows.map((r) => (
                 <TableRow key={`${r.employeeId}-${r.date}`}>
                   <TableCell>
                     <div className="text-sm font-medium">{r.date}</div>

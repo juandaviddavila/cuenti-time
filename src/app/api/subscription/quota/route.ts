@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/server-auth";
-import { getFaceQuotaStatus } from "@/lib/subscription";
+import { getEmployeeQuotaStatus } from "@/lib/subscription";
 import { stringToBigint } from "@/lib/bigint";
 
 export async function GET() {
@@ -15,10 +15,20 @@ export async function GET() {
     return NextResponse.json({ error: "Sin empresa asociada" }, { status: 400 });
   }
 
-  const quota = await getFaceQuotaStatus(stringToBigint(session.companyId));
+  const quota = await getEmployeeQuotaStatus(stringToBigint(session.companyId));
   if (!quota) {
     return NextResponse.json({ error: "Empresa no encontrada" }, { status: 404 });
   }
 
-  return NextResponse.json(quota);
+  // Campos legacy (rostro) + cupo por empleados activos
+  return NextResponse.json({
+    maxEmployees: quota.maxEmployees,
+    activeEmployees: quota.activeEmployees,
+    registeredFaces: quota.registeredFaces,
+    overQuota: quota.overQuota,
+    canAddEmployee: quota.canAddEmployee,
+    canRegisterFace: quota.canRegisterFace,
+    canRegister: quota.canRegisterFace,
+    excessCount: quota.excessCount,
+  });
 }

@@ -2,12 +2,17 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getServerSession, getUserPermissionFields } from "@/lib/server-auth";
 import { canManageIntegrations } from "@/lib/user-permissions";
+import { canAccessSettings, getPostLoginPath } from "@/lib/post-login-path";
 import { SettingsClient } from "./settings-client";
 import { stringToBigint, bigintToString } from "@/lib/bigint";
 
 export default async function SettingsPage() {
   const session = await getServerSession();
   if (!session) redirect("/login");
+
+  if (!canAccessSettings(session.role)) {
+    redirect(getPostLoginPath(session.role));
+  }
 
   const permissions = await getUserPermissionFields(session.userId);
   const showIntegrations = permissions ? canManageIntegrations(permissions) : false;

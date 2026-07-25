@@ -1,14 +1,27 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { useAuthStore } from "@/store/auth-store";
-import { LogOut, User, Mail, Shield, Building2, Calendar } from "lucide-react";
+import { LogOut, User, Mail, Shield, Building2, Calendar, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { PageHeader } from "@/components/shared/page-header";
 import { getInitials, formatDateTime } from "@/lib/utils";
 import type { UserRole } from "@/types/user";
@@ -31,15 +44,66 @@ const ROLE_STYLES: Record<UserRole, string> = {
   DEVELOPER:         "bg-cyan-500/10 text-cyan-600 border-cyan-200 dark:border-cyan-800",
 };
 
+const pwdSchema = z
+  .object({
+    currentPassword: z.string().min(1, "Requerido"),
+    newPassword: z.string().min(8, "Mínimo 8 caracteres"),
+    confirmPassword: z.string().min(1, "Requerido"),
+  })
+  .refine((d) => d.newPassword === d.confirmPassword, {
+    message: "Las contraseñas no coinciden",
+    path: ["confirmPassword"],
+  })
+  .refine((d) => d.currentPassword !== d.newPassword, {
+    message: "La nueva contraseña debe ser distinta a la actual",
+    path: ["newPassword"],
+  });
+
+type PwdForm = z.infer<typeof pwdSchema>;
+
 export default function ProfilePage() {
   const router  = useRouter();
   const { user, logout } = useAuthStore();
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const [savingPwd, setSavingPwd] = useState(false);
+
+  const pwdForm = useForm<PwdForm>({
+    resolver: zodResolver(pwdSchema),
+    defaultValues: {
+      currentPassword: "",
+      newPassword: "",
+      confirmPassword: "",
+    },
+  });
 
   const handleLogout = async () => {
     try { await fetch("/api/auth/logout", { method: "POST" }); } catch { /* continue */ }
     logout();
     toast.success("Sesión cerrada");
     router.push("/login");
+  };
+
+  const onChangePassword = async (values: PwdForm) => {
+    setSavingPwd(true);
+    try {
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: values.currentPassword,
+          newPassword: values.newPassword,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+      if (!res.ok) throw new Error(json.error ?? "No se pudo cambiar la contraseña");
+      toast.success(json.message ?? "Contraseña actualizada");
+      setPwdOpen(false);
+      pwdForm.reset();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error inesperado");
+    } finally {
+      setSavingPwd(false);
+    }
   };
 
   if (!user) return null;
@@ -89,11 +153,91 @@ export default function ProfilePage() {
 
           <Separator className="my-5" />
 
-          <Button variant="destructive" onClick={handleLogout} className="w-full">
-            <LogOut className="w-4 h-4 mr-2" />Cerrar sesión
-          </Button>
+          <div className="space-y-3">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                pwdForm.reset();
+                setPwdOpen(true);
+              }}
+            >
+              <Lock className="w-4 h-4 mr-2" />
+              Cambiar contraseña
+            </Button>
+            <Button variant="destructive" onClick={handleLogout} className="w-full">
+              <LogOut className="w-4 h-4 mr-2" />
+              Cerrar sesión
+            </Button>
+          </div>
         </CardContent>
       </Card>
+
+      <Dialog open={pwdOpen} onOpenChange={setPwdOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Cambiar contraseña</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={pwdForm.handleSubmit(onChangePassword)} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="currentPassword">Contraseña actual</Label>
+              <Input
+                id="currentPassword"
+                type="password"
+                autoComplete="current-password"
+                {...pwdForm.register("currentPassword")}
+              />
+              {pwdForm.formState.errors.currentPassword && (
+                <p className="text-xs text-destructive">
+                  {pwdForm.formState.errors.currentPassword.message}
+                </p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="newPassword">Nueva contraseña</Label>
+              <Input
+                id="newPassword"
+                type="password"
+                autoComplete="new-password"
+                {...pwdForm.register("newPassword")}
+              />
+              {pwdForm.formState.errors.newPassword && (
+                <p className="text-xs text-destructive">
+                  {pwdForm.formState.errors.newPassword.message}
+                </p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="confirmPassword">Confirmar nueva contraseña</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                autoComplete="new-password"
+                {...pwdForm.register("confirmPassword")}
+              />
+              {pwdForm.formState.errors.confirmPassword && (
+                <p className="text-xs text-destructive">
+                  {pwdForm.formState.errors.confirmPassword.message}
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setPwdOpen(false)}
+                disabled={savingPwd}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={savingPwd}>
+                {savingPwd ? "Guardando..." : "Actualizar"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

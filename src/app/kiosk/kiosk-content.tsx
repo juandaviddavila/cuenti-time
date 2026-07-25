@@ -90,7 +90,6 @@ async function prepareRegisteredEmployees(data: RegisteredEmp[]): Promise<Regist
             faceRegistered: true,
             faceRegisteredAt: new Date().toISOString(),
             faceEmbedding: descriptor,
-            faceEmbeddingId: `face_${Date.now()}`,
           }),
         }).catch(() => undefined);
       }
@@ -103,6 +102,9 @@ async function prepareRegisteredEmployees(data: RegisteredEmp[]): Promise<Regist
 
 const DETECTION_INTERVAL = 1000; // ms between face detection attempts
 const RESET_DELAY = 10_000;
+/** Frames consecutivos con rostro antes de identificar. */
+const STABLE_HITS_REQUIRED = 3;
+const SOFT_RETRY_COOLDOWN_MS = 900;
 
 export default function KioskPage() {
   const router = useRouter();
@@ -111,6 +113,9 @@ export default function KioskPage() {
   const streamRef   = useRef<MediaStream | null>(null);
   const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
   const resetTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const processingRef = useRef(false);
+  const stableHitsRef = useRef(0);
+  const softRetryUntilRef = useRef(0);
 
   const [branches, setBranches]         = useState<BranchOption[]>([]);
   const [branchId, setBranchId]         = useState("");
@@ -213,35 +218,55 @@ export default function KioskPage() {
     timerRef.current = setInterval(async () => {
       const video = videoRef.current;
       if (!video || video.readyState < 2 || phase !== "idle") return;
+      if (processingRef.current) return;
+      if (Date.now() < softRetryUntilRef.current) return;
 
       try {
         const detection = await detectFace(video);
         setFaceVisible(detection.detected);
 
-        if (detection.detected && detection.descriptor && branchId) {
-          const serverMatch = await searchFaceInDatabase(detection.descriptor, branchId);
-          if (serverMatch) {
-            void runIdentification(serverMatch);
+        if (!detection.detected || !detection.descriptor || !branchId) {
+          stableHitsRef.current = 0;
+          if (phase === "idle") {
+            setStatusMsg("Buscando rostro... Acomode la cámara y mire de frente");
+          }
+          return;
+        }
+
+        stableHitsRef.current += 1;
+        const hits = stableHitsRef.current;
+        if (hits < STABLE_HITS_REQUIRED) {
+          setStatusMsg(`Rostro detectado — mantenga la posición (${hits}/${STABLE_HITS_REQUIRED})`);
+          return;
+        }
+
+        const serverMatch = await searchFaceInDatabase(detection.descriptor, branchId);
+        if (serverMatch) {
+          void runIdentification(serverMatch);
+          return;
+        }
+
+        if (registered.length > 0) {
+          const match = findBestMatch(
+            detection.descriptor,
+            registered
+              .filter(e => e.descriptor !== null)
+              .map(e => ({ employeeId: e.employeeId, descriptor: e.descriptor as number[] })),
+            faceMatchThreshold
+          );
+
+          if (match && isMatch(match.distance, faceMatchThreshold)) {
+            const matchedEmp = registered.find(e => e.employeeId === match.employeeId);
+            if (matchedEmp) void runIdentification(matchedEmp);
             return;
           }
-
-          if (registered.length > 0) {
-            const match = findBestMatch(
-              detection.descriptor,
-              registered
-                .filter(e => e.descriptor !== null)
-                .map(e => ({ employeeId: e.employeeId, descriptor: e.descriptor as number[] })),
-              faceMatchThreshold
-            );
-
-            if (match && isMatch(match.distance, faceMatchThreshold)) {
-              const matchedEmp = registered.find(e => e.employeeId === match.employeeId);
-              if (matchedEmp) void runIdentification(matchedEmp);
-            }
-          }
         }
+
+        stableHitsRef.current = 0;
+        setStatusMsg("Sin coincidencia — reintentando...");
       } catch {
         // Non-fatal detection errors
+        stableHitsRef.current = 0;
       }
     }, DETECTION_INTERVAL);
   }
@@ -269,8 +294,18 @@ export default function KioskPage() {
     return canvas.toDataURL("image/jpeg", 0.85);
   }
 
+  const resumeSoftRetry = useCallback((message: string) => {
+    processingRef.current = false;
+    stableHitsRef.current = 0;
+    softRetryUntilRef.current = Date.now() + SOFT_RETRY_COOLDOWN_MS;
+    setErrorMsg("");
+    setStatusMsg(message);
+    setPhase("idle");
+  }, []);
+
   const runIdentification = useCallback(async (matchedEmp: RegisteredEmp | FaceSearchMatch) => {
-    if (phase !== "idle") return;
+    if (phase !== "idle" || processingRef.current) return;
+    processingRef.current = true;
     const employeeId = matchedEmp.employeeId;
     setPhase("processing");
     stopDetectionLoop();
@@ -282,15 +317,11 @@ export default function KioskPage() {
     const liveness = await checkLiveness(photo ?? "");
 
     if (!liveness.faceDetected) {
-      setErrorMsg("No se detectó un rostro válido");
-      setPhase("error");
-      stopCamera();
+      resumeSoftRetry("No se ve bien el rostro. Acomode la cámara — reintentando...");
       return;
     }
     if (!liveness.isRealPerson || !liveness.antiSpoofingPassed) {
-      setErrorMsg(`Prueba de vida fallida: ${liveness.reason}`);
-      setPhase("error");
-      stopCamera();
+      resumeSoftRetry(`Ajuste iluminación/ángulo (${liveness.reason}) — reintentando...`);
       return;
     }
 
@@ -353,8 +384,10 @@ export default function KioskPage() {
       setErrorMsg(err instanceof Error ? err.message : "Error al registrar");
       setPhase("error");
       stopCamera();
+    } finally {
+      processingRef.current = false;
     }
-  }, [phase, branchId, branches]);
+  }, [phase, branchId, branches, resumeSoftRetry]);
 
   function reset() {
     stopEverything();
@@ -363,6 +396,9 @@ export default function KioskPage() {
     setErrorMsg("");
     setStatusMsg("");
     setCountdown(10);
+    processingRef.current = false;
+    stableHitsRef.current = 0;
+    softRetryUntilRef.current = 0;
     startCamera();
   }
 

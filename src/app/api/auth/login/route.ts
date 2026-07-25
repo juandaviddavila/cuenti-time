@@ -9,11 +9,49 @@ import {
   getVerificationExpiry,
   hashVerificationCode,
 } from "@/lib/verification-code";
+import { createAuthenticatedLoginResponse } from "@/lib/login-session";
 
 const loginSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
-  password: z.string().min(1).max(128),
+  /** password = email+contraseña (y OTP salvo FACE_REGISTRAR); email_code = solo correo + código */
+  method: z.enum(["password", "email_code"]).default("password"),
+  password: z.string().min(1).max(128).optional(),
+}).superRefine((data, ctx) => {
+  if (data.method === "password" && !data.password) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["password"],
+      message: "La contraseña es requerida",
+    });
+  }
 });
+
+/** Roles que, con contraseña, inician sesión sin OTP por correo. */
+const LOGIN_WITHOUT_OTP_ROLES = new Set(["FACE_REGISTRAR"]);
+
+async function issueLoginCode(user: { id: bigint; name: string; email: string }) {
+  const loginCode = generateVerificationCode();
+  const loginOtpHash = await hashVerificationCode(loginCode);
+  const loginOtpExpiresAt = getVerificationExpiry();
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { loginOtpHash, loginOtpExpiresAt },
+  });
+
+  await sendEmail({
+    to: user.email,
+    subject: "Tu código de acceso — cuenti time",
+    html: loginCodeEmailHtml(user.name, loginCode),
+  });
+
+  return {
+    requiresLoginCode: true as const,
+    message: "Te enviamos un código de 6 dígitos a tu correo.",
+    email: user.email,
+    ...(process.env.NODE_ENV === "development" ? { devCode: loginCode } : {}),
+  };
+}
 
 export async function POST(request: NextRequest) {
   const ip =
@@ -47,7 +85,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { email, password } = parsed.data;
+  const { email, password, method } = parsed.data;
 
   try {
     const user = await prisma.user.findUnique({
@@ -59,13 +97,46 @@ export async function POST(request: NextRequest) {
         password: true,
         status: true,
         emailVerifiedAt: true,
+        role: true,
+        companyId: true,
+        avatar: true,
+        bypassGeofence: true,
+        canManageIntegrations: true,
+        createdAt: true,
       },
     });
 
+    // ── Login solo con código al correo ────────────────────────────────────
+    if (method === "email_code") {
+      // Respuesta genérica si no existe / inactivo (evita enumeración)
+      if (!user || user.status === "INACTIVE") {
+        return NextResponse.json({
+          requiresLoginCode: true,
+          message: "Si el correo está registrado, te enviamos un código de 6 dígitos.",
+          email,
+        });
+      }
+
+      if (!user.emailVerifiedAt && !LOGIN_WITHOUT_OTP_ROLES.has(user.role)) {
+        return NextResponse.json(
+          {
+            error: "Debes verificar tu correo antes de iniciar sesión",
+            code: "EMAIL_NOT_VERIFIED",
+            email: user.email,
+          },
+          { status: 403 }
+        );
+      }
+
+      const payload = await issueLoginCode(user);
+      return NextResponse.json(payload);
+    }
+
+    // ── Login con contraseña ───────────────────────────────────────────────
     const dummyHash =
       "$2b$12$invalidhashtopreventtimingattacksonuserenumeration00000";
     const passwordValid = await bcrypt.compare(
-      password,
+      password ?? "",
       user?.password ?? dummyHash
     );
 
@@ -73,7 +144,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Credenciales inválidas" }, { status: 401 });
     }
 
-    if (!user.emailVerifiedAt) {
+    if (!user.emailVerifiedAt && !LOGIN_WITHOUT_OTP_ROLES.has(user.role)) {
       return NextResponse.json(
         {
           error: "Debes verificar tu correo antes de iniciar sesión",
@@ -84,27 +155,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const loginCode = generateVerificationCode();
-    const loginOtpHash = await hashVerificationCode(loginCode);
-    const loginOtpExpiresAt = getVerificationExpiry();
+    // Registrador facial: login directo sin código por correo
+    if (LOGIN_WITHOUT_OTP_ROLES.has(user.role)) {
+      return createAuthenticatedLoginResponse(user);
+    }
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { loginOtpHash, loginOtpExpiresAt },
-    });
-
-    await sendEmail({
-      to: user.email,
-      subject: "Tu código de acceso — cuenti time",
-      html: loginCodeEmailHtml(user.name, loginCode),
-    });
-
-    return NextResponse.json({
-      requiresLoginCode: true,
-      message: "Te enviamos un código de 6 dígitos a tu correo.",
-      email: user.email,
-      ...(process.env.NODE_ENV === "development" ? { devCode: loginCode } : {}),
-    });
+    const payload = await issueLoginCode(user);
+    return NextResponse.json(payload);
   } catch (error) {
     console.error("Login error:", error);
     return NextResponse.json(

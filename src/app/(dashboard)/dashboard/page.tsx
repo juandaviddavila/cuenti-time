@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getServerSession, getCompanyFilter } from "@/lib/server-auth";
+import { getPostLoginPath } from "@/lib/post-login-path";
 import { DashboardClient } from "./dashboard-client";
 import { subDays, startOfDay, endOfDay, format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -11,6 +12,11 @@ export default async function DashboardPage() {
   // ── Auth guard ─────────────────────────────────────────────────────────────
   const session = await getServerSession();
   if (!session) redirect("/login");
+
+  // Registrador facial no usa el panel; aterriza en registro facial
+  if (session.role === "FACE_REGISTRAR") {
+    redirect(getPostLoginPath(session.role));
+  }
 
   const companyFilter = getCompanyFilter(session);
   const today = new Date();

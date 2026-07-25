@@ -34,7 +34,11 @@ const updateEmployeeSchema = z.object({
   // Puede ser cuid o id fijo del seed/registro (p.ej. pos-general-<companyId>)
   positionId: z.coerce.bigint().positive().nullish().or(z.literal("").transform(() => null)),
   faceEmbedding: z.array(z.number()).length(128).optional().nullable(),
-  faceEmbeddingId: z.coerce.bigint().positive().nullish(),
+  // Acepta BigInt o strings legacy (`face_…`); solo persiste numéricos positivos
+  faceEmbeddingId: z
+    .union([z.coerce.bigint().positive(), z.string(), z.null()])
+    .optional()
+    .transform((v) => (typeof v === "bigint" ? v : undefined)),
   status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
   hireDate: z.string().datetime().optional().or(z.literal("").transform(() => undefined)),
   internalCode: z.string().max(50).optional().or(z.literal("").transform(() => undefined)),

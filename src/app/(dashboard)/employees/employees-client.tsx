@@ -6,7 +6,6 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
-import { useRouter } from "next/navigation";
 import {
   Plus, Search, Camera, Edit, ToggleLeft, ToggleRight, Users, ImageIcon,
   Clock, Trash2,
@@ -25,7 +24,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Separator } from "@/components/ui/separator";
 import { PhotoCaptureModal } from "@/components/shared/photo-capture-modal";
+import { EmployeeFaceRegistrationDialog } from "@/components/shared/employee-face-registration-dialog";
+import {
+  UpgradePlanDialog,
+  isEmployeeSlotLimitError,
+} from "@/components/shared/upgrade-plan-dialog";
 import { getInitials } from "@/lib/utils";
+import { localDateKey, parseLocalDateParam } from "@/lib/hr/local-date";
 import type { Position } from "@/types/position";
 import type { DocumentType } from "@/types/employee";
 import type { UserRole, Status } from "@/types/user";
@@ -79,17 +84,17 @@ const employeeSchema = z.object({
   fullName:       z.string().min(2, "Mínimo 2 caracteres"),
   documentType:   z.enum(["CC", "CE", "PASSPORT", "NIT", "OTHER"] as const),
   documentNumber: z.string().min(4, "Mínimo 4 caracteres"),
-  positionId:     z.string().optional(),
+  positionId:     z.string().optional().refine(v => !v || /^\d+$/.test(v), "Seleccione un cargo válido"),
   email:          z.string().optional().refine(v => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "Email inválido"),
   phone:          z.string().optional(),
-  branchId:       z.string().cuid("Seleccione una sucursal válida"),
+  // IDs son BigInt serializados como string decimal (no CUID)
+  branchId:       z.string().regex(/^\d+$/, "Seleccione una sucursal válida"),
   hireDate:       z.string().optional(),
   internalCode:   z.string().optional(),
 });
 type EmployeeFormValues = z.infer<typeof employeeSchema>;
 
 export function EmployeesClient({ companyId, userRole, employees: initialEmployees, branches, positions }: Props) {
-  const router = useRouter();
   const [employees, setEmployees] = useState<EmployeeRow[]>(initialEmployees);
   const [search, setSearch] = useState("");
   const [branchFilter, setBranchFilter] = useState("all");
@@ -102,8 +107,22 @@ export function EmployeesClient({ companyId, userRole, employees: initialEmploye
   // Photo state — managed outside the RHF schema to avoid base64 in Zod
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [photoModalOpen, setPhotoModalOpen] = useState(false);
+  const [faceEmployee, setFaceEmployee] = useState<EmployeeRow | null>(null);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [quotaInfo, setQuotaInfo] = useState<{
+    maxEmployees: number;
+    activeEmployees: number;
+  } | null>(null);
 
   const canEdit = userRole === "SAAS_SUPER_ADMIN" || userRole === "COMPANY_ADMIN" || userRole === "FACE_REGISTRAR";
+
+  function showUpgradeFromQuota(maxEmployees?: number, activeEmployees?: number) {
+    if (typeof maxEmployees === "number" && typeof activeEmployees === "number") {
+      setQuotaInfo({ maxEmployees, activeEmployees });
+    }
+    setDialogOpen(false);
+    setUpgradeOpen(true);
+  }
 
   const form = useForm<EmployeeFormValues>({
     resolver: zodResolver(employeeSchema),
@@ -120,7 +139,33 @@ export function EmployeesClient({ companyId, userRole, employees: initialEmploye
     );
   }), [employees, search, branchFilter, statusFilter, faceFilter]);
 
-  function openCreate() {
+  async function openCreate() {
+    try {
+      const res = await fetch("/api/subscription/quota");
+      if (res.ok) {
+        const quota = (await res.json()) as {
+          canAddEmployee?: boolean;
+          maxEmployees?: number;
+          activeEmployees?: number;
+        };
+        if (quota.canAddEmployee === false) {
+          showUpgradeFromQuota(quota.maxEmployees, quota.activeEmployees);
+          return;
+        }
+        if (
+          typeof quota.maxEmployees === "number" &&
+          typeof quota.activeEmployees === "number"
+        ) {
+          setQuotaInfo({
+            maxEmployees: quota.maxEmployees,
+            activeEmployees: quota.activeEmployees,
+          });
+        }
+      }
+    } catch {
+      /* si falla el cupo, dejamos intentar el alta y el API lo valida */
+    }
+
     setEditingEmployee(null);
     setShiftEmployeeId(null);
     setPhotoPreview(null);
@@ -187,7 +232,19 @@ export function EmployeesClient({ companyId, userRole, employees: initialEmploye
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, companyId }),
         });
         if (!res.ok) {
-          const e = await res.json().catch(() => ({})) as { error?: string; details?: Record<string, string[]> };
+          const e = await res.json().catch(() => ({})) as {
+            error?: string;
+            code?: string;
+            details?: Record<string, string[]>;
+          };
+          if (isEmployeeSlotLimitError(e)) {
+            const match = e.error?.match(/Cupo de (\d+).*?\((\d+) activos\)/);
+            showUpgradeFromQuota(
+              match ? Number(match[1]) : quotaInfo?.maxEmployees,
+              match ? Number(match[2]) : quotaInfo?.activeEmployees
+            );
+            return;
+          }
           const detail = e.details ? Object.entries(e.details).map(([k, v]) => `${k}: ${v.join(", ")}`).join("; ") : "";
           throw new Error(detail ? `${e.error ?? "Error"} (${detail})` : (e.error ?? "Error al crear"));
         }
@@ -220,10 +277,17 @@ export function EmployeesClient({ companyId, userRole, employees: initialEmploye
 
   return (
     <div className="space-y-6">
+      <UpgradePlanDialog
+        open={upgradeOpen}
+        onOpenChange={setUpgradeOpen}
+        maxEmployees={quotaInfo?.maxEmployees}
+        activeEmployees={quotaInfo?.activeEmployees}
+      />
+
       <PageHeader
         title="Empleados"
         description={`${employees.length} empleado${employees.length !== 1 ? "s" : ""} registrado${employees.length !== 1 ? "s" : ""}`}
-        action={canEdit ? <Button onClick={openCreate}><Plus className="w-4 h-4 mr-2" />Nuevo empleado</Button> : undefined}
+        action={canEdit ? <Button onClick={() => void openCreate()}><Plus className="w-4 h-4 mr-2" />Nuevo empleado</Button> : undefined}
       />
 
       {/* Filters */}
@@ -301,7 +365,7 @@ export function EmployeesClient({ companyId, userRole, employees: initialEmploye
                     <TableCell><StatusBadge status={emp.status} /></TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => router.push(`/facial-registration?employeeId=${emp.id}`)} title="Registrar rostro facial">
+                        <Button variant="ghost" size="sm" onClick={() => setFaceEmployee(emp)} title="Registrar rostro facial">
                           <Camera className="w-4 h-4" />
                         </Button>
                         {canEdit && <>
@@ -340,7 +404,7 @@ export function EmployeesClient({ companyId, userRole, employees: initialEmploye
                     </div>
                   </div>
                   <div className="flex flex-col gap-1 shrink-0">
-                    <Button variant="ghost" size="sm" onClick={() => router.push(`/facial-registration?employeeId=${emp.id}`)}>
+                    <Button variant="ghost" size="sm" onClick={() => setFaceEmployee(emp)}>
                       <Camera className="w-4 h-4" />
                     </Button>
                     {canEdit && <Button variant="ghost" size="sm" onClick={() => openEdit(emp)}><Edit className="w-4 h-4" /></Button>}
@@ -481,8 +545,43 @@ export function EmployeesClient({ companyId, userRole, employees: initialEmploye
           </Form>
         </DialogContent>
       </Dialog>
+
+      <EmployeeFaceRegistrationDialog
+        open={!!faceEmployee}
+        employee={faceEmployee}
+        onClose={() => setFaceEmployee(null)}
+        onSuccess={({ employeeId, photo }) => {
+          setEmployees((prev) =>
+            prev.map((e) =>
+              e.id === employeeId
+                ? {
+                    ...e,
+                    faceRegistered: true,
+                    faceRegisteredAt: new Date().toISOString(),
+                    ...(photo ? { photo } : {}),
+                  }
+                : e
+            )
+          );
+          setFaceEmployee((prev) =>
+            prev && prev.id === employeeId
+              ? { ...prev, faceRegistered: true, ...(photo ? { photo } : {}) }
+              : prev
+          );
+        }}
+      />
     </div>
   );
+}
+
+function toDateInputValue(iso: string): string {
+  // Clave de calendario local (evita desfase UTC → día anterior)
+  return localDateKey(new Date(iso));
+}
+
+function formatAssignmentDate(iso: string): string {
+  const [y, m, d] = localDateKey(new Date(iso)).split("-");
+  return `${Number(d)}/${Number(m)}/${y}`;
 }
 
 function ShiftAssignmentSection({ employeeId, canEdit }: { employeeId: string; canEdit: boolean }) {
@@ -491,8 +590,9 @@ function ShiftAssignmentSection({ employeeId, canEdit }: { employeeId: string; c
   const [selectedShiftId, setSelectedShiftId] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [assigning, setAssigning] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -520,55 +620,94 @@ function ShiftAssignmentSection({ employeeId, canEdit }: { employeeId: string; c
     return () => { cancelled = true; };
   }, [employeeId, refreshKey]);
 
-  async function handleAssign() {
+  function resetForm() {
+    setEditingId(null);
+    setSelectedShiftId("");
+    setStartDate("");
+    setEndDate("");
+  }
+
+  function startEdit(a: EmployeeShift) {
+    setEditingId(a.id);
+    setSelectedShiftId(a.shiftId);
+    setStartDate(toDateInputValue(a.startDate));
+    setEndDate(a.endDate ? toDateInputValue(a.endDate) : "");
+  }
+
+  async function handleSave(e?: React.MouseEvent) {
+    e?.preventDefault();
+    e?.stopPropagation();
     if (!selectedShiftId || !startDate) {
       toast.error("Selecciona un turno y una fecha de inicio");
       return;
     }
-    const start = new Date(startDate);
-    const end = endDate ? new Date(endDate) : null;
+    const start = parseLocalDateParam(startDate);
+    const end = endDate ? parseLocalDateParam(endDate) : null;
     if (end && end <= start) {
       toast.error("La fecha final debe ser posterior a la inicial");
       return;
     }
-    setAssigning(true);
+    setSaving(true);
     try {
-      const res = await fetch("/api/employee-shifts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          employeeId,
-          shiftId: selectedShiftId,
-          startDate: start.toISOString(),
-          endDate: end ? end.toISOString() : null,
-        }),
-      });
-      if (!res.ok) {
-        const e = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(e.error ?? "Error al asignar turno");
+      if (editingId) {
+        const res = await fetch(`/api/employee-shifts/${editingId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            shiftId: selectedShiftId,
+            startDate: start.toISOString(),
+            endDate: end ? end.toISOString() : null,
+          }),
+        });
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(err.error ?? "Error al actualizar asignación");
+        }
+        const updated = (await res.json()) as EmployeeShift;
+        setAssignments((prev) =>
+          prev.map((a) => (a.id === editingId ? { ...a, ...updated } : a))
+        );
+        toast.success("Asignación actualizada");
+        resetForm();
+      } else {
+        const res = await fetch("/api/employee-shifts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            employeeId,
+            shiftId: selectedShiftId,
+            startDate: start.toISOString(),
+            endDate: end ? end.toISOString() : null,
+          }),
+        });
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(err.error ?? "Error al asignar turno");
+        }
+        toast.success("Turno asignado correctamente");
+        resetForm();
+        setRefreshKey((k) => k + 1);
       }
-      toast.success("Turno asignado correctamente");
-      setSelectedShiftId("");
-      setStartDate("");
-      setEndDate("");
-      setRefreshKey(k => k + 1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error inesperado");
     } finally {
-      setAssigning(false);
+      setSaving(false);
     }
   }
 
-  async function handleDelete(id: string) {
+  async function handleDelete(e: React.MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
     if (!confirm("¿Deseas eliminar esta asignación de turno?")) return;
     try {
       const res = await fetch(`/api/employee-shifts/${id}`, { method: "DELETE" });
       if (!res.ok) {
-        const e = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(e.error ?? "Error al eliminar asignación");
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error ?? "Error al eliminar asignación");
       }
+      setAssignments((prev) => prev.filter((a) => a.id !== id));
+      if (editingId === id) resetForm();
       toast.success("Asignación eliminada");
-      setRefreshKey(k => k + 1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error inesperado");
     }
@@ -595,7 +734,9 @@ function ShiftAssignmentSection({ employeeId, canEdit }: { employeeId: string; c
           {canEdit && (
             <div className="grid grid-cols-1 gap-3">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium">Turno</label>
+                <label className="text-xs font-medium">
+                  {editingId ? "Editando turno" : "Turno"}
+                </label>
                 <Select
                   value={selectedShiftId || undefined}
                   onValueChange={setSelectedShiftId}
@@ -604,21 +745,39 @@ function ShiftAssignmentSection({ employeeId, canEdit }: { employeeId: string; c
                     <SelectValue placeholder="Seleccionar turno" />
                   </SelectTrigger>
                   <SelectContent>
-                    {shifts.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                    {shifts.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium">Fecha inicio</label>
-                <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium">Fecha fin (opcional)</label>
-                <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
+                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
               </div>
-              <Button type="button" onClick={handleAssign} disabled={assigning} className="w-full">
-                {assigning ? "Asignando..." : "Asignar turno"}
-              </Button>
+              <div className="flex gap-2">
+                {editingId && (
+                  <Button type="button" variant="outline" onClick={resetForm} className="flex-1">
+                    Cancelar edición
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  onClick={(e) => void handleSave(e)}
+                  disabled={saving}
+                  className="flex-1"
+                >
+                  {saving
+                    ? "Guardando..."
+                    : editingId
+                      ? "Guardar cambios"
+                      : "Asignar turno"}
+                </Button>
+              </div>
             </div>
           )}
 
@@ -628,19 +787,43 @@ function ShiftAssignmentSection({ employeeId, canEdit }: { employeeId: string; c
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground">Turnos asignados</p>
               <div className="divide-y rounded-md border">
-                {assignments.map(a => (
-                  <div key={a.id} className="flex items-center justify-between p-3">
+                {assignments.map((a) => (
+                  <div
+                    key={a.id}
+                    className={`flex items-center justify-between p-3 ${
+                      editingId === a.id ? "bg-muted/50" : ""
+                    }`}
+                  >
                     <div>
                       <p className="text-sm font-medium">{a.shift.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        {new Date(a.startDate).toLocaleDateString("es-CO")}
-                        {a.endDate ? ` → ${new Date(a.endDate).toLocaleDateString("es-CO")}` : " (sin fecha de fin)"}
+                        {formatAssignmentDate(a.startDate)}
+                        {a.endDate
+                          ? ` → ${formatAssignmentDate(a.endDate)}`
+                          : " (sin fecha de fin)"}
                       </p>
                     </div>
                     {canEdit && (
-                      <Button variant="ghost" size="sm" onClick={() => handleDelete(a.id)} title="Eliminar asignación">
-                        <Trash2 className="w-4 h-4 text-red-500" />
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => startEdit(a)}
+                          title="Editar asignación"
+                        >
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => void handleDelete(e, a.id)}
+                          title="Eliminar asignación"
+                        >
+                          <Trash2 className="w-4 h-4 text-red-500" />
+                        </Button>
+                      </div>
                     )}
                   </div>
                 ))}

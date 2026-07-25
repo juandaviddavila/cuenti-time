@@ -182,7 +182,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     label: "Configuración",
     href: "/settings",
     icon: Settings,
-    roles: ["SAAS_SUPER_ADMIN", "COMPANY_ADMIN", "DEVELOPER"],
+    roles: ["SAAS_SUPER_ADMIN", "COMPANY_ADMIN", "BRANCH_SUPERVISOR"],
   },
   {
     kind: "link",

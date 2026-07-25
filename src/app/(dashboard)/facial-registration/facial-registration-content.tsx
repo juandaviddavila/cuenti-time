@@ -103,7 +103,6 @@ async function prepareRegisteredFaces(data: RegisteredFace[]): Promise<Registere
               faceRegistered: true,
               faceRegisteredAt: new Date().toISOString(),
               faceEmbedding: descriptor,
-              faceEmbeddingId: `face_${Date.now()}`,
             }),
           });
           if (!res.ok) {
@@ -123,6 +122,11 @@ async function prepareRegisteredFaces(data: RegisteredFace[]): Promise<Registere
 
 type Phase = "loading_models" | "idle" | "processing" | "success" | "error";
 
+/** Frames consecutivos con rostro antes de capturar (~2.4s a 800ms). */
+const STABLE_HITS_REQUIRED = 3;
+/** Espera entre soft-retries mientras la persona se acomoda. */
+const SOFT_RETRY_COOLDOWN_MS = 900;
+
 function FacialRegistrationContent() {
   const searchParams  = useSearchParams();
   const router        = useRouter();
@@ -136,6 +140,8 @@ function FacialRegistrationContent() {
   const faceMatchThresholdRef = useRef(DEFAULT_FACE_MATCH_THRESHOLD);
   const branchesRef = useRef<BranchMini[]>([]);
   const processingRef = useRef(false);
+  const stableHitsRef = useRef(0);
+  const softRetryUntilRef = useRef(0);
 
   const [employee, setEmployee]       = useState<EmployeeMini | null>(null);
   const [automaticMode, setAutomaticMode] = useState(!employeeId);
@@ -278,62 +284,82 @@ function FacialRegistrationContent() {
     timerRef.current = setInterval(async () => {
       const video = videoRef.current;
       if (!video || video.readyState < 2) return;
+      if (processingRef.current) return;
+      if (Date.now() < softRetryUntilRef.current) return;
+
       try {
         const result = await detectFace(video);
         setFaceDetected(result.detected);
-        if (!result.detected) {
-          setScanMessage("Buscando rostro...");
+
+        if (!result.detected || !result.descriptor) {
+          stableHitsRef.current = 0;
+          setScanMessage("Buscando rostro... Acomode la cámara y mire de frente");
           return;
         }
-        if (result.detected && result.descriptor && phase === "idle" && !processingRef.current) {
-          if (employee) {
-            setScanMessage("Rostro detectado. Capturando...");
-            void triggerCapture(employee);
-            return;
-          }
 
-          if (registeredFacesRef.current.length === 0) {
-            setScanMessage("Rostro detectado, pero no hay rostros registrados para comparar");
-            return;
-          }
+        if (phase !== "idle") return;
 
-          setScanMessage("Rostro detectado. Buscando en pgvector...");
+        stableHitsRef.current += 1;
+        const hits = stableHitsRef.current;
 
-          let matched: RegisteredFace | FaceSearchMatch | null = await searchFaceInDatabase(result.descriptor);
-          if (!matched) {
-            const threshold = faceMatchThresholdRef.current;
-            const match = findBestMatch(
-              result.descriptor,
-              registeredFacesRef.current
-                .filter(e => Array.isArray(e.descriptor))
-                .map(e => ({ employeeId: e.employeeId, descriptor: e.descriptor as number[] })),
-              threshold
-            );
-
-            if (!match || !isMatch(match.distance, threshold)) {
-              setScanMessage(match ? `Sin coincidencia (${match.distance.toFixed(2)})` : "Sin coincidencia");
-              return;
-            }
-
-            matched = registeredFacesRef.current.find(e => e.employeeId === match.employeeId) ?? null;
-          }
-
-          if (!matched) return;
-          setScanMessage(`Identificado: ${matched.fullName}`);
-
-          const target: EmployeeMini = {
-            id: matched.employeeId,
-            fullName: matched.fullName,
-            position: matched.position,
-            branchId: matched.branchId,
-            photo: matched.photo,
-            faceRegistered: true,
-          };
-          setEmployee(target);
-          void triggerCapture(target);
+        if (hits < STABLE_HITS_REQUIRED) {
+          setScanMessage(`Rostro detectado — mantenga la posición (${hits}/${STABLE_HITS_REQUIRED})`);
+          return;
         }
+
+        if (employee) {
+          setScanMessage("Posición estable. Capturando...");
+          void triggerCapture(employee);
+          return;
+        }
+
+        if (registeredFacesRef.current.length === 0) {
+          stableHitsRef.current = 0;
+          setScanMessage("Rostro detectado, pero no hay rostros registrados para comparar");
+          return;
+        }
+
+        setScanMessage("Rostro estable. Buscando en pgvector...");
+
+        let matched: RegisteredFace | FaceSearchMatch | null = await searchFaceInDatabase(result.descriptor);
+        if (!matched) {
+          const threshold = faceMatchThresholdRef.current;
+          const match = findBestMatch(
+            result.descriptor,
+            registeredFacesRef.current
+              .filter(e => Array.isArray(e.descriptor))
+              .map(e => ({ employeeId: e.employeeId, descriptor: e.descriptor as number[] })),
+            threshold
+          );
+
+          if (!match || !isMatch(match.distance, threshold)) {
+            stableHitsRef.current = 0;
+            setScanMessage(match ? `Sin coincidencia (${match.distance.toFixed(2)})` : "Sin coincidencia");
+            return;
+          }
+
+          matched = registeredFacesRef.current.find(e => e.employeeId === match.employeeId) ?? null;
+        }
+
+        if (!matched) {
+          stableHitsRef.current = 0;
+          return;
+        }
+        setScanMessage(`Identificado: ${matched.fullName}`);
+
+        const target: EmployeeMini = {
+          id: matched.employeeId,
+          fullName: matched.fullName,
+          position: matched.position,
+          branchId: matched.branchId,
+          photo: matched.photo,
+          faceRegistered: true,
+        };
+        setEmployee(target);
+        void triggerCapture(target);
       } catch (err) {
         console.error("Face detection failed:", err);
+        stableHitsRef.current = 0;
         setScanMessage("Error detectando rostro. Reintentando...");
       }
     }, 800);
@@ -399,6 +425,20 @@ function FacialRegistrationContent() {
     return data.type ?? decision.type;
   }
 
+  const resumeSoftRetry = useCallback((message: string) => {
+    processingRef.current = false;
+    stableHitsRef.current = 0;
+    softRetryUntilRef.current = Date.now() + SOFT_RETRY_COOLDOWN_MS;
+    setProgress(0);
+    setProgressLabel("");
+    setCapturedPhoto(null);
+    setLivenessMsg("");
+    setErrorMsg("");
+    setScanMessage(message);
+    setPhase("idle");
+    // Cámara sigue activa: el loop de detección se reanuda solo.
+  }, []);
+
   const triggerCapture = useCallback(async (targetEmployee?: EmployeeMini) => {
     const activeEmployee = targetEmployee ?? employee;
     if (!activeEmployee || phase !== "idle" || processingRef.current) return;
@@ -408,7 +448,7 @@ function FacialRegistrationContent() {
 
     const photo = captureFrame();
     setCapturedPhoto(photo);
-    stopCamera();
+    // No apagar la cámara: si falla por acomodo, seguimos intentando.
 
     setProgress(10);
     setProgressLabel("Detectando rostro...");
@@ -423,9 +463,7 @@ function FacialRegistrationContent() {
     setProgressLabel("Extrayendo descriptor facial...");
     const detection = await detectFace(tempImg);
     if (!detection.detected || !detection.descriptor) {
-      setErrorMsg("No se detectó un rostro válido en la imagen. Intente nuevamente.");
-      setPhase("error");
-      processingRef.current = false;
+      resumeSoftRetry("Acomode el rostro en el óvalo — seguimos intentando...");
       return;
     }
 
@@ -436,15 +474,12 @@ function FacialRegistrationContent() {
     setLivenessMsg(liveness.reason);
 
     if (!liveness.faceDetected) {
-      setErrorMsg("La IA no detectó un rostro en la imagen capturada.");
-      setPhase("error");
-      processingRef.current = false;
+      resumeSoftRetry("No se ve bien el rostro. Acomode la cámara — reintentando...");
       return;
     }
     if (!liveness.isRealPerson || !liveness.antiSpoofingPassed) {
-      setErrorMsg(`Prueba de vida fallida: ${liveness.reason}`);
-      setPhase("error");
-      processingRef.current = false;
+      // Mientras se acomodan, liveness suele fallar: soft-retry, no modal rojo.
+      resumeSoftRetry(`Ajuste iluminación/ángulo (${liveness.reason}) — reintentando...`);
       return;
     }
 
@@ -458,9 +493,11 @@ function FacialRegistrationContent() {
         setProgressLabel(markType === "CHECK_IN" ? "Entrada registrada" : "Salida registrada");
         await sleep(400);
         setEmployee(activeEmployee);
+        stopCamera();
         setPhase("success");
         toast.success(`${markType === "CHECK_IN" ? "Entrada" : "Salida"} registrada: ${activeEmployee.fullName}`);
       } catch (err) {
+        stopCamera();
         setErrorMsg(err instanceof Error ? err.message : "Error al registrar asistencia");
         setPhase("error");
       } finally {
@@ -481,7 +518,6 @@ function FacialRegistrationContent() {
           faceRegisteredAt: new Date().toISOString(),
           biometricConsentAt: new Date().toISOString(),
           faceEmbedding: detection.descriptor,
-          faceEmbeddingId: `face_${Date.now()}`,
           ...(photo ? { photo } : {}),
         }),
       });
@@ -495,15 +531,17 @@ function FacialRegistrationContent() {
       setProgressLabel("Registro completado");
       await sleep(400);
       setEmployee(prev => prev ? { ...prev, faceRegistered: true, photo: photo ?? prev.photo } : activeEmployee);
+      stopCamera();
       setPhase("success");
       toast.success(`Rostro de ${activeEmployee.fullName} registrado correctamente`);
     } catch (err) {
+      stopCamera();
       setErrorMsg(err instanceof Error ? err.message : "Error inesperado");
       setPhase("error");
     } finally {
       processingRef.current = false;
     }
-  }, [automaticMode, employee, employeeId, phase]);
+  }, [automaticMode, employee, employeeId, phase, resumeSoftRetry]);
 
   function resetAll() {
     setPhase("idle");
@@ -516,6 +554,8 @@ function FacialRegistrationContent() {
     setResetCountdown(0);
     setEmployee(employeeId ? employee : null);
     processingRef.current = false;
+    stableHitsRef.current = 0;
+    softRetryUntilRef.current = 0;
     setScanMessage(automaticMode ? "Buscando rostro..." : "Coloque el rostro en el óvalo");
     stopDetectionLoop();
     startCamera();
@@ -647,7 +687,7 @@ function FacialRegistrationContent() {
                   ? registeredFaceCount > 0
                     ? `Modo automático • ${registeredFaceCount} rostro${registeredFaceCount === 1 ? "" : "s"} entrenado${registeredFaceCount === 1 ? "" : "s"}`
                     : "Modo automático • sin rostros entrenados para comparar"
-                  : "Coloque su rostro en el óvalo • Captura automática al detectar"}
+                  : "Coloque su rostro en el óvalo • Mantenga la posición unos segundos"}
               </p>
             </div>
           </>

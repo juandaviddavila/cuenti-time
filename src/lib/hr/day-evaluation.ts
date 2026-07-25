@@ -446,6 +446,8 @@ export interface EmployeeSummary {
   lateDays: number;
   earlyLeaveDays: number;
   openDays: number;
+  /** Días con irregularidad (ausencia, tarde, salida anticipada, sin salida o incidencia). */
+  noveltyDays: number;
   totalLateMinutes: number;
   totalEarlyLeaveMinutes: number;
   punctualityRate: number;
@@ -477,6 +479,18 @@ function isPresentOutcome(outcome: DayOutcome): boolean {
   );
 }
 
+/** Día con irregularidad operativa (ausencia, tarde, salida anticipada, sin cierre o incidencia). */
+function isNoveltyOutcome(outcome: DayOutcome): boolean {
+  return (
+    outcome === "AUSENTE" ||
+    outcome === "AUSENCIA_JUSTIFICADA" ||
+    outcome === "TARDE" ||
+    outcome === "SALIDA_ANTICIPADA" ||
+    outcome === "TARDE_Y_SALIDA_ANTICIPADA" ||
+    outcome === "SIN_SALIDA"
+  );
+}
+
 export function summarizeByEmployee(rows: DayEvaluation[]): EmployeeSummary[] {
   const map = new Map<string, EmployeeSummary>();
 
@@ -497,6 +511,7 @@ export function summarizeByEmployee(rows: DayEvaluation[]): EmployeeSummary[] {
         lateDays: 0,
         earlyLeaveDays: 0,
         openDays: 0,
+        noveltyDays: 0,
         totalLateMinutes: 0,
         totalEarlyLeaveMinutes: 0,
         punctualityRate: 0,
@@ -516,6 +531,7 @@ export function summarizeByEmployee(rows: DayEvaluation[]): EmployeeSummary[] {
       s.totalEarlyLeaveMinutes += r.earlyLeaveMinutes;
     }
     if (r.outcome === "SIN_SALIDA") s.openDays += 1;
+    if (isNoveltyOutcome(r.outcome) || r.novelty) s.noveltyDays += 1;
   }
 
   return Array.from(map.values())

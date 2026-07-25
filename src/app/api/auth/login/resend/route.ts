@@ -50,21 +50,22 @@ export async function POST(request: NextRequest) {
         email: true,
         status: true,
         emailVerifiedAt: true,
-        loginOtpHash: true,
+        role: true,
       },
     });
 
     if (
       !user ||
       user.status === "INACTIVE" ||
-      !user.emailVerifiedAt ||
-      !user.loginOtpHash
+      (!user.emailVerifiedAt && user.role !== "FACE_REGISTRAR")
     ) {
       return NextResponse.json({
         message: "Si hay un inicio de sesión pendiente, enviaremos un nuevo código.",
       });
     }
 
+    // Permitir reenvío también en flujo passwordless (puede no haber OTP previo
+    // si el usuario pide reenviar desde una pantalla desfasada).
     const loginCode = generateVerificationCode();
     const loginOtpHash = await hashVerificationCode(loginCode);
     const loginOtpExpiresAt = getVerificationExpiry();

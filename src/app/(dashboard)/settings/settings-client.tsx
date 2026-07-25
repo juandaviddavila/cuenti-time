@@ -206,11 +206,26 @@ export function SettingsClient({
   }
 
   async function onChangePwd(values: PwdForm) {
-    await new Promise((r) => setTimeout(r, 600));
-    toast.success("Contraseña actualizada exitosamente");
-    setPwdOpen(false);
-    pwdForm.reset();
-    void values;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: values.current,
+          newPassword: values.newPwd,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+      if (!res.ok) throw new Error(json.error ?? "No se pudo cambiar la contraseña");
+      toast.success(json.message ?? "Contraseña actualizada exitosamente");
+      setPwdOpen(false);
+      pwdForm.reset();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al cambiar la contraseña");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
