@@ -6,6 +6,7 @@ import { requireSession, getCompanyFilter } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { scheduleWebhookEvent } from "@/lib/webhooks/dispatch";
 import { stringToBigint } from "@/lib/bigint";
+import { isCountryCode } from "@/lib/countries";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -15,6 +16,12 @@ const createBranchSchema = z.object({
   code: z.string().min(1).max(50),
   address: z.string().max(500).optional(),
   city: z.string().max(100).optional(),
+  countryCode: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .refine((code) => isCountryCode(code), "País no válido")
+    .optional(),
   phone: z.string().max(20).optional(),
   status: z.enum(["ACTIVE", "INACTIVE"]).default("ACTIVE"),
   duplicateWindowMinutes: z.number().min(0.1).max(1440).default(10),
@@ -164,6 +171,7 @@ export async function POST(request: NextRequest) {
         code: branch.code,
         status: branch.status,
         city: branch.city,
+        countryCode: branch.countryCode,
         latitude: branch.latitude,
         longitude: branch.longitude,
         radiusMeters: branch.radiusMeters,

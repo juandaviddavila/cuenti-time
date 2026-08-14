@@ -7,6 +7,7 @@ export interface Branch {
   code: string;
   address?: string;
   city?: string;
+  countryCode?: string;
   phone?: string;
   status: Status;
   latitude?: number;
@@ -26,6 +27,7 @@ export interface CreateBranchRequest {
   code: string;
   address?: string;
   city?: string;
+  countryCode?: string;
   phone?: string;
   latitude?: number;
   longitude?: number;

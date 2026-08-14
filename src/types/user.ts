@@ -15,6 +15,7 @@ export interface User {
   companyName?: string | null;
   name: string;
   email: string;
+  phoneE164?: string | null;
   role: UserRole;
   status: Status;
   avatar?: string;

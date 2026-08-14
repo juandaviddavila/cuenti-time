@@ -38,6 +38,7 @@ export default async function BranchesPage() {
         code: b.code,
         address: b.address,
         city: b.city,
+        countryCode: b.countryCode,
         phone: b.phone,
         status: b.status,
         employeeCount: b._count.employees,

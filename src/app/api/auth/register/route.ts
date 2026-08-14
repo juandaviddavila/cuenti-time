@@ -10,6 +10,7 @@ import {
   getVerificationExpiry,
   hashVerificationCode,
 } from "@/lib/verification-code";
+import { normalizeToE164 } from "@/lib/phone/e164";
 
 const registerSchema = z.object({
   name: z.string().min(2).max(100).trim(),
@@ -22,6 +23,7 @@ const registerSchema = z.object({
     .regex(/[0-9]/, "Debe contener al menos un número"),
   companyLegalName: z.string().min(2).max(200).trim(),
   companyTaxId: z.string().min(5).max(30).trim(),
+  phoneE164: z.string().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -57,6 +59,7 @@ export async function POST(request: NextRequest) {
 
   const { name, email, password, companyLegalName, companyTaxId } =
     parsed.data;
+  const phoneE164 = normalizeToE164(parsed.data.phoneE164);
 
   try {
     // Check if email already exists
@@ -66,6 +69,16 @@ export async function POST(request: NextRequest) {
         { error: "El correo ya está registrado" },
         { status: 409 }
       );
+    }
+
+    if (phoneE164) {
+      const existingPhone = await prisma.user.findUnique({ where: { phoneE164 } });
+      if (existingPhone) {
+        return NextResponse.json(
+          { error: "El celular ya está registrado" },
+          { status: 409 }
+        );
+      }
     }
 
     // Check if taxId already exists
@@ -119,6 +132,7 @@ export async function POST(request: NextRequest) {
         data: {
           name,
           email,
+          phoneE164,
           password: hashedPassword,
           role: "COMPANY_ADMIN",
           companyId: company.id,

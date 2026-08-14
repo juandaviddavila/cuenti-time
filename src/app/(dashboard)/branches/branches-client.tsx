@@ -19,6 +19,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import type { UserRole, Status } from "@/types/user";
 import { getBrowserLocation } from "@/lib/browser-location";
+import { countryFlagEmoji, findCountry } from "@/lib/countries";
+import { CountryCombobox } from "@/components/shared/country-combobox";
 import type { BranchLocationValue } from "@/components/shared/branch-location-picker";
 
 const BranchLocationPicker = dynamic(
@@ -34,7 +36,7 @@ const BranchLocationPicker = dynamic(
 
 interface BranchRow {
   id: string; companyId: string; companyName: string; name: string; code: string;
-  address?: string | null; city?: string | null; phone?: string | null;
+  address?: string | null; city?: string | null; countryCode?: string | null; phone?: string | null;
   status: Status; employeeCount: number;
   duplicateWindowMinutes: number;
   latitude?: number | null; longitude?: number | null; googlePlaceId?: string | null; radiusMeters: number;
@@ -46,7 +48,10 @@ interface Props { userRole: UserRole; companyId: string; companies: Company[]; b
 const branchSchema = z.object({
   name: z.string().min(2), code: z.string().min(1).max(20),
   companyId: z.string().min(1, "Seleccione empresa"),
-  address: z.string().optional(), city: z.string().optional(), phone: z.string().optional(),
+  address: z.string().optional(),
+  city: z.string().optional(),
+  countryCode: z.string().length(2).optional(),
+  phone: z.string().optional(),
   duplicateWindowMinutes: z.number().min(0.1, "Mínimo 0.1 minutos").max(1440).optional(),
   latitude: z.number().min(-90).max(90).optional(),
   longitude: z.number().min(-180).max(180).optional(),
@@ -86,7 +91,7 @@ export function BranchesClient({ userRole, companyId, companies, branches: initi
     resolver: zodResolver(branchSchema),
     defaultValues: {
       name: "", code: "", companyId: companyId || companies[0]?.id || "",
-      address: "", city: "", phone: "",
+      address: "", city: "", countryCode: "CO", phone: "",
       duplicateWindowMinutes: 10,
       radiusMeters: 500,
     },
@@ -94,14 +99,24 @@ export function BranchesClient({ userRole, companyId, companies, branches: initi
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    return branches.filter(b => !search || b.name.toLowerCase().includes(q) || b.code.toLowerCase().includes(q) || (b.city ?? "").toLowerCase().includes(q));
+    return branches.filter((b) => {
+      if (!search) return true;
+      const countryName = findCountry(b.countryCode)?.name.toLowerCase() ?? "";
+      return (
+        b.name.toLowerCase().includes(q) ||
+        b.code.toLowerCase().includes(q) ||
+        (b.city ?? "").toLowerCase().includes(q) ||
+        countryName.includes(q) ||
+        (b.countryCode ?? "").toLowerCase().includes(q)
+      );
+    });
   }, [branches, search]);
 
   function openCreate() {
     setEditing(null);
     form.reset({
       name: "", code: "", companyId: companyId || companies[0]?.id || "",
-      address: "", city: "", phone: "",
+      address: "", city: "", countryCode: "CO", phone: "",
       duplicateWindowMinutes: 10,
       latitude: undefined,
       longitude: undefined,
@@ -114,7 +129,7 @@ export function BranchesClient({ userRole, companyId, companies, branches: initi
     setEditing(b);
     form.reset({
       name: b.name, code: b.code, companyId: b.companyId,
-      address: b.address ?? "", city: b.city ?? "", phone: b.phone ?? "",
+      address: b.address ?? "", city: b.city ?? "", countryCode: b.countryCode ?? "CO", phone: b.phone ?? "",
       duplicateWindowMinutes: b.duplicateWindowMinutes,
       latitude: b.latitude ?? undefined,
       longitude: b.longitude ?? undefined,
@@ -134,6 +149,7 @@ export function BranchesClient({ userRole, companyId, companies, branches: initi
         code: values.code,
         address: values.address || undefined,
         city: values.city || undefined,
+        countryCode: values.countryCode || undefined,
         phone: values.phone || undefined,
         duplicateWindowMinutes: values.duplicateWindowMinutes ?? 10,
         latitude: values.latitude,
@@ -177,6 +193,7 @@ export function BranchesClient({ userRole, companyId, companies, branches: initi
               companyName,
               name: values.name,
               code: values.code,
+              countryCode: values.countryCode,
               status: "ACTIVE",
               employeeCount: 0,
               duplicateWindowMinutes: values.duplicateWindowMinutes ?? 10,
@@ -223,6 +240,7 @@ export function BranchesClient({ userRole, companyId, companies, branches: initi
   const watchedLatitude = form.watch("latitude");
   const watchedLongitude = form.watch("longitude");
   const watchedRadius = form.watch("radiusMeters") ?? 500;
+  const watchedCountryCode = form.watch("countryCode");
 
   const handleLocationChange = useCallback(
     (value: BranchLocationValue) => {
@@ -237,6 +255,9 @@ export function BranchesClient({ userRole, companyId, companies, branches: initi
       }
       if (value.city !== undefined) {
         form.setValue("city", value.city, { shouldDirty: true });
+      }
+      if (value.countryCode !== undefined) {
+        form.setValue("countryCode", value.countryCode, { shouldDirty: true });
       }
       if (value.googlePlaceId !== undefined) {
         form.setValue("googlePlaceId", value.googlePlaceId, { shouldDirty: true });
@@ -291,7 +312,18 @@ export function BranchesClient({ userRole, companyId, companies, branches: initi
                       <TableCell className="text-sm text-muted-foreground">{b.companyName}</TableCell>
                     )}
                     <TableCell className="text-sm">
-                      {b.city ? <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{b.city}</span> : "—"}
+                      {b.city || b.countryCode ? (
+                        <span className="flex items-center gap-1.5">
+                          {b.countryCode ? (
+                            <span className="text-base leading-none" aria-hidden>
+                              {countryFlagEmoji(b.countryCode)}
+                            </span>
+                          ) : (
+                            <MapPin className="w-3 h-3" />
+                          )}
+                          {b.city ?? findCountry(b.countryCode)?.name ?? "—"}
+                        </span>
+                      ) : "—"}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{b.duplicateWindowMinutes} min</TableCell>
                     <TableCell className="text-sm">{b.employeeCount}</TableCell>
@@ -321,7 +353,18 @@ export function BranchesClient({ userRole, companyId, companies, branches: initi
                       {isSuperAdmin ? `${b.companyName} · ` : ""}
                       <span className="font-mono">{b.code}</span>
                     </p>
-                    {b.city && <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5"><MapPin className="w-3 h-3" />{b.city}</p>}
+                    {(b.city || b.countryCode) && (
+                      <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                        {b.countryCode ? (
+                          <span className="text-base leading-none" aria-hidden>
+                            {countryFlagEmoji(b.countryCode)}
+                          </span>
+                        ) : (
+                          <MapPin className="w-3 h-3" />
+                        )}
+                        {b.city ?? findCountry(b.countryCode)?.name}
+                      </p>
+                    )}
                     {b.latitude !== null && b.latitude !== undefined && b.longitude !== null && b.longitude !== undefined && (
                       <p className="text-xs text-muted-foreground mt-0.5">Radio permitido: {b.radiusMeters} m</p>
                     )}
@@ -366,6 +409,19 @@ export function BranchesClient({ userRole, companyId, companies, branches: initi
                   </FormItem>
                 )} />
               )}
+              <FormField control={form.control} name="countryCode" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>País</FormLabel>
+                  <FormControl>
+                    <CountryCombobox
+                      value={field.value}
+                      onChange={field.onChange}
+                      placeholder="Buscar país..."
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
               <div className="grid grid-cols-2 gap-3">
                 {(["city", "phone"] as const).map(f => (
                   <FormField key={f} control={form.control} name={f} render={({ field }) => (
@@ -418,6 +474,7 @@ export function BranchesClient({ userRole, companyId, companies, branches: initi
                   latitude={watchedLatitude}
                   longitude={watchedLongitude}
                   radiusMeters={watchedRadius}
+                  countryCode={watchedCountryCode}
                   onChange={handleLocationChange}
                 />
 

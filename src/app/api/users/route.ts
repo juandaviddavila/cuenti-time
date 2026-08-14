@@ -7,6 +7,7 @@ import { requireSession, getCompanyFilter } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { resolveEffectiveRole } from "@/lib/super-admin-access";
 import { stringToBigint } from "@/lib/bigint";
+import { normalizeToE164 } from "@/lib/phone/e164";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -14,6 +15,15 @@ const createUserSchema = z.object({
   companyId: z.coerce.bigint().positive().nullish(),
   name: z.string().min(1).max(200),
   email: z.string().email().max(254).toLowerCase(),
+  phoneE164: z
+    .string()
+    .optional()
+    .transform((value) => {
+      const trimmed = value?.trim() ?? "";
+      if (!trimmed) return undefined;
+      return normalizeToE164(trimmed);
+    })
+    .refine((value) => value !== null, "Celular inválido"),
   password: z.string().min(8).max(128),
   role: z
     .enum([
@@ -81,6 +91,7 @@ export async function GET(request: NextRequest) {
           companyId: true,
           name: true,
           email: true,
+          phoneE164: true,
           role: true,
           status: true,
           avatar: true,
@@ -177,6 +188,7 @@ export async function POST(request: NextRequest) {
         companyId: true,
         name: true,
         email: true,
+        phoneE164: true,
         role: true,
         status: true,
         avatar: true,
@@ -207,7 +219,11 @@ export async function POST(request: NextRequest) {
       err.code === "P2002"
     ) {
       return NextResponse.json(
-        { error: "Ya existe un usuario con ese email" },
+        {
+          error: err.meta?.target?.toString().includes("phoneE164")
+            ? "Ya existe un usuario con ese celular"
+            : "Ya existe un usuario con ese email",
+        },
         { status: 409 }
       );
     }

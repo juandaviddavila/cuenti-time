@@ -5,8 +5,7 @@ import { Circle, GoogleMap, Marker, useJsApiLoader } from "@react-google-maps/ap
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Search } from "lucide-react";
-
-const DEFAULT_CENTER = { lat: 6.25184, lng: -75.56359 };
+import { findCountry, getCountryMapCenter } from "@/lib/countries";
 const MAP_CONTAINER_STYLE = { width: "100%", height: "280px" };
 
 export interface BranchLocationValue {
@@ -14,6 +13,7 @@ export interface BranchLocationValue {
   longitude?: number;
   address?: string;
   city?: string;
+  countryCode?: string;
   googlePlaceId?: string;
 }
 
@@ -21,6 +21,7 @@ interface BranchLocationPickerProps {
   latitude?: number;
   longitude?: number;
   radiusMeters: number;
+  countryCode?: string;
   onChange: (value: BranchLocationValue) => void;
 }
 
@@ -40,6 +41,12 @@ function extractCityFromPlace(place: google.maps.places.Place): string | undefin
   );
 }
 
+function extractCountryCodeFromPlace(place: google.maps.places.Place): string | undefined {
+  const shortText = place.addressComponents?.find((c) => c.types.includes("country"))?.shortText;
+  if (!shortText || !/^[A-Za-z]{2}$/.test(shortText)) return undefined;
+  return shortText.toUpperCase();
+}
+
 function getValidCoords(
   lat?: number,
   lng?: number
@@ -56,10 +63,14 @@ function getValidCoords(
 }
 
 function AddressSearchInput({
+  regionCode,
   onPlaceSelect,
 }: {
+  regionCode?: string;
   onPlaceSelect: (value: BranchLocationValue) => void;
 }) {
+  const country = findCountry(regionCode);
+  const region = (regionCode ?? "CO").toLowerCase();
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<google.maps.places.AutocompleteSuggestion[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -97,7 +108,8 @@ function AddressSearchInput({
         const { suggestions: results } =
           await AutocompleteSuggestion.fetchAutocompleteSuggestions({
             input: query,
-            includedRegionCodes: ["co"],
+            includedRegionCodes: [region],
+            region,
             language: "es",
             sessionToken: sessionTokenRef.current,
           });
@@ -113,7 +125,13 @@ function AddressSearchInput({
     }, 350);
 
     return () => window.clearTimeout(timeout);
-  }, [query]);
+  }, [query, region, regionCode]);
+
+  useEffect(() => {
+    sessionTokenRef.current = null;
+    setSuggestions([]);
+    setIsOpen(false);
+  }, [regionCode]);
 
   const handleSelect = useCallback(
     async (suggestion: google.maps.places.AutocompleteSuggestion) => {
@@ -129,6 +147,12 @@ function AddressSearchInput({
         const location = place.location;
         if (!location) return;
 
+        const placeCountry = extractCountryCodeFromPlace(place);
+        const selectedCountry = regionCode?.toUpperCase();
+        if (selectedCountry && placeCountry && placeCountry !== selectedCountry) {
+          return;
+        }
+
         setQuery(place.formattedAddress ?? prediction.text.text);
         setIsOpen(false);
         setSuggestions([]);
@@ -139,13 +163,14 @@ function AddressSearchInput({
           longitude: roundCoord(location.lng()),
           address: place.formattedAddress ?? place.displayName ?? undefined,
           city: extractCityFromPlace(place),
+          countryCode: selectedCountry ?? placeCountry,
           googlePlaceId: place.id ?? undefined,
         });
       } catch {
         setIsOpen(false);
       }
     },
-    [onPlaceSelect]
+    [onPlaceSelect, regionCode]
   );
 
   return (
@@ -155,7 +180,11 @@ function AddressSearchInput({
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onFocus={() => suggestions.length > 0 && setIsOpen(true)}
-        placeholder="Escribe una dirección y selecciona un resultado..."
+        placeholder={
+          country
+            ? `Buscar dirección en ${country.name}...`
+            : "Escribe una dirección y selecciona un resultado..."
+        }
         className="pl-9"
       />
       {isOpen && (
@@ -187,6 +216,7 @@ export function BranchLocationPicker({
   latitude,
   longitude,
   radiusMeters,
+  countryCode,
   onChange,
 }: BranchLocationPickerProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
@@ -194,21 +224,26 @@ export function BranchLocationPicker({
     id: "branch-location-map",
     googleMapsApiKey: apiKey,
     language: "es",
-    region: "CO",
   });
 
   const savedPosition = useMemo(
     () => getValidCoords(latitude, longitude),
     [latitude, longitude]
   );
+  const countryCenter = useMemo(
+    () => getCountryMapCenter(countryCode),
+    [countryCode]
+  );
 
-  const [markerPosition, setMarkerPosition] = useState<google.maps.LatLngLiteral>(DEFAULT_CENTER);
+  const [markerPosition, setMarkerPosition] = useState<google.maps.LatLngLiteral>(countryCenter);
 
   useEffect(() => {
     if (savedPosition) {
       setMarkerPosition(savedPosition);
+      return;
     }
-  }, [savedPosition]);
+    setMarkerPosition(countryCenter);
+  }, [savedPosition, countryCenter]);
 
   const updatePosition = useCallback(
     (lat: number, lng: number, extra?: Omit<BranchLocationValue, "latitude" | "longitude">) => {
@@ -278,9 +313,10 @@ export function BranchLocationPicker({
     <div className="space-y-3">
       <div className="space-y-2">
         <Label className="text-sm">Buscar dirección</Label>
-        <AddressSearchInput onPlaceSelect={onPlaceSelect} />
+        <AddressSearchInput regionCode={countryCode} onPlaceSelect={onPlaceSelect} />
         <p className="text-xs text-muted-foreground">
-          Arrastra el pin rojo o haz clic en el mapa para ajustar la ubicación exacta.
+          La búsqueda se limita al país seleccionado. Arrastra el pin rojo o haz clic en el mapa
+          para ajustar la ubicación exacta.
         </p>
       </div>
 
@@ -288,7 +324,7 @@ export function BranchLocationPicker({
         <GoogleMap
           mapContainerStyle={MAP_CONTAINER_STYLE}
           center={markerPosition}
-          zoom={16}
+          zoom={savedPosition ? 16 : 11}
           onClick={onMapClick}
           options={{
             streetViewControl: false,

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Eye, EyeOff, Building2, CheckCircle2 } from "lucide-react";
@@ -13,6 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { APP_NAME } from "@/lib/brand";
 import { BrandLockup } from "@/components/brand-lockup";
+import { PhoneInput } from "@/components/shared/phone-input";
+import { normalizeToE164 } from "@/lib/phone/e164";
 
 const registerSchema = z.object({
   name: z.string().min(2, "Nombre requerido"),
@@ -25,6 +27,7 @@ const registerSchema = z.object({
   confirmPassword: z.string(),
   companyLegalName: z.string().min(2, "Razón social requerida"),
   companyTaxId: z.string().min(5, "NIT / Identificación fiscal requerida"),
+  phoneE164: z.string().optional(),
 }).refine((d) => d.password === d.confirmPassword, {
   message: "Las contraseñas no coinciden",
   path: ["confirmPassword"],
@@ -44,8 +47,12 @@ export default function RegisterPage() {
     register,
     handleSubmit,
     trigger,
+    control,
     formState: { errors },
-  } = useForm<RegisterForm>({ resolver: zodResolver(registerSchema) });
+  } = useForm<RegisterForm>({
+    resolver: zodResolver(registerSchema),
+    defaultValues: { phoneE164: "" },
+  });
 
   useEffect(() => {
     void fetch("/api/billing/config")
@@ -73,7 +80,10 @@ export default function RegisterPage() {
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({
+          ...data,
+          phoneE164: normalizeToE164(data.phoneE164) ?? undefined,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error al registrar");
@@ -150,6 +160,19 @@ export default function RegisterPage() {
                   {...register("email")}
                 />
                 {errors.email && <p className="text-destructive text-sm">{errors.email.message}</p>}
+              </div>
+              <div className="space-y-2">
+                <Label>Celular WhatsApp (opcional)</Label>
+                <Controller
+                  control={control}
+                  name="phoneE164"
+                  render={({ field }) => (
+                    <PhoneInput value={field.value} onChange={field.onChange} />
+                  )}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Si lo agregas, podrás entrar con un código por WhatsApp.
+                </p>
               </div>
               <div className="space-y-2">
                 <Label>Contraseña</Label>

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Eye, EyeOff, ArrowLeft, Mail, KeyRound } from "lucide-react";
+import { Eye, EyeOff, ArrowLeft, Mail, KeyRound, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,8 @@ import { APP_NAME } from "@/lib/brand";
 import { BrandLockup } from "@/components/brand-lockup";
 import type { User } from "@/types/user";
 import { getPostLoginPath } from "@/lib/post-login-path";
+import { PhoneInput } from "@/components/shared/phone-input";
+import { normalizeToE164 } from "@/lib/phone/e164";
 
 const credentialsSchema = z.object({
   email: z.string().email("Correo electrónico inválido"),
@@ -25,6 +27,12 @@ const credentialsSchema = z.object({
 
 const emailOnlySchema = z.object({
   email: z.string().email("Correo electrónico inválido"),
+});
+
+const whatsappSchema = z.object({
+  phoneE164: z
+    .string()
+    .refine((value) => Boolean(normalizeToE164(value)), "Ingresa un celular válido"),
 });
 
 const codeSchema = z.object({
@@ -36,8 +44,9 @@ const codeSchema = z.object({
 
 type CredentialsForm = z.infer<typeof credentialsSchema>;
 type EmailOnlyForm = z.infer<typeof emailOnlySchema>;
+type WhatsappForm = z.infer<typeof whatsappSchema>;
 type CodeForm = z.infer<typeof codeSchema>;
-type LoginMethod = "password" | "email_code";
+type LoginMethod = "password" | "email_code" | "whatsapp";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -47,6 +56,7 @@ export default function LoginPage() {
   const [method, setMethod] = useState<LoginMethod>("password");
   const [step, setStep] = useState<"form" | "code">("form");
   const [pendingEmail, setPendingEmail] = useState("");
+  const [pendingPhone, setPendingPhone] = useState("");
   const setUser = useAuthStore((s) => s.setUser);
 
   const credentialsForm = useForm<CredentialsForm>({
@@ -55,6 +65,11 @@ export default function LoginPage() {
 
   const emailOnlyForm = useForm<EmailOnlyForm>({
     resolver: zodResolver(emailOnlySchema),
+  });
+
+  const whatsappForm = useForm<WhatsappForm>({
+    resolver: zodResolver(whatsappSchema),
+    defaultValues: { phoneE164: "" },
   });
 
   const codeForm = useForm<CodeForm>({
@@ -66,6 +81,7 @@ export default function LoginPage() {
     setMethod(next);
     setStep("form");
     codeForm.reset({ code: "" });
+    setPendingPhone("");
   }
 
   const finishWithSession = (user: User, accessToken: string) => {
@@ -165,13 +181,53 @@ export default function LoginPage() {
     }
   };
 
+  const onWhatsappSubmit = async (data: WhatsappForm) => {
+    setIsLoading(true);
+    try {
+      const phoneE164 = normalizeToE164(data.phoneE164);
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method: "whatsapp", phoneE164 }),
+      });
+      const json = (await res.json()) as {
+        error?: string;
+        requiresLoginCode?: boolean;
+        message?: string;
+        phoneE164?: string;
+        devCode?: string;
+      };
+
+      if (!res.ok) {
+        throw new Error(json.error || "Error al enviar el código");
+      }
+
+      setPendingPhone(phoneE164 ?? data.phoneE164);
+      setPendingEmail("");
+      setStep("code");
+      codeForm.reset({ code: "" });
+      toast.success(json.message ?? "Revisa WhatsApp e ingresa el código");
+      if (json.devCode) {
+        toast.info(`Modo desarrollo: código ${json.devCode}`);
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Error al enviar el código");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const onCodeSubmit = async (data: CodeForm) => {
     setIsLoading(true);
     try {
       const res = await fetch("/api/auth/login/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: pendingEmail, code: data.code }),
+        body: JSON.stringify(
+          pendingPhone
+            ? { phoneE164: pendingPhone, code: data.code }
+            : { email: pendingEmail, code: data.code }
+        ),
       });
       const json = (await res.json()) as {
         error?: string;
@@ -196,13 +252,17 @@ export default function LoginPage() {
   };
 
   const onResendCode = async () => {
-    if (!pendingEmail) return;
+    if (!pendingEmail && !pendingPhone) return;
     setIsResending(true);
     try {
       const res = await fetch("/api/auth/login/resend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: pendingEmail }),
+        body: JSON.stringify(
+          pendingPhone
+            ? { phoneE164: pendingPhone, channel: "whatsapp" }
+            : { email: pendingEmail, channel: "email" }
+        ),
       });
       const json = (await res.json()) as { error?: string; message?: string; devCode?: string };
       if (!res.ok) throw new Error(json.error ?? "No se pudo reenviar el código");
@@ -256,12 +316,12 @@ export default function LoginPage() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-1 rounded-lg border p-1 bg-muted/40">
+              <div className="grid grid-cols-3 gap-1 rounded-lg border p-1 bg-muted/40">
                 <button
                   type="button"
                   onClick={() => switchMethod("password")}
                   className={cn(
-                    "flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs sm:text-sm font-medium transition-colors",
+                    "flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-[11px] sm:text-sm font-medium transition-colors",
                     method === "password"
                       ? "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -274,14 +334,27 @@ export default function LoginPage() {
                   type="button"
                   onClick={() => switchMethod("email_code")}
                   className={cn(
-                    "flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs sm:text-sm font-medium transition-colors",
+                    "flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-[11px] sm:text-sm font-medium transition-colors",
                     method === "email_code"
                       ? "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
                   )}
                 >
                   <Mail className="w-3.5 h-3.5 shrink-0" />
-                  Código al correo
+                  Correo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchMethod("whatsapp")}
+                  className={cn(
+                    "flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-[11px] sm:text-sm font-medium transition-colors",
+                    method === "whatsapp"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <MessageCircle className="w-3.5 h-3.5 shrink-0" />
+                  WhatsApp
                 </button>
               </div>
 
@@ -350,7 +423,7 @@ export default function LoginPage() {
                     {isLoading ? "Verificando..." : "Continuar"}
                   </Button>
                 </form>
-              ) : (
+              ) : method === "email_code" ? (
                 <form
                   onSubmit={emailOnlyForm.handleSubmit(onEmailCodeSubmit)}
                   className="space-y-5"
@@ -383,6 +456,37 @@ export default function LoginPage() {
                     {isLoading ? "Enviando..." : "Enviar código"}
                   </Button>
                 </form>
+              ) : (
+                <form
+                  onSubmit={whatsappForm.handleSubmit(onWhatsappSubmit)}
+                  className="space-y-5"
+                >
+                  <div className="space-y-2">
+                    <Label>Celular WhatsApp</Label>
+                    <PhoneInput
+                      value={whatsappForm.watch("phoneE164")}
+                      onChange={(value) =>
+                        whatsappForm.setValue("phoneE164", value, { shouldValidate: true })
+                      }
+                    />
+                    {whatsappForm.formState.errors.phoneE164 && (
+                      <p className="text-destructive text-sm">
+                        {whatsappForm.formState.errors.phoneE164.message}
+                      </p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      Elige el indicativo del país y te enviaremos un código por WhatsApp.
+                    </p>
+                  </div>
+
+                  <Button
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full h-11 font-medium"
+                  >
+                    {isLoading ? "Enviando..." : "Enviar código por WhatsApp"}
+                  </Button>
+                </form>
               )}
             </>
           ) : (
@@ -393,7 +497,9 @@ export default function LoginPage() {
                 </h2>
                 <p className="text-sm text-muted-foreground">
                   Enviamos un código de 6 dígitos a{" "}
-                  <span className="text-foreground font-medium">{pendingEmail}</span>
+                  <span className="text-foreground font-medium">
+                    {pendingPhone || pendingEmail}
+                  </span>
                 </p>
               </div>
 

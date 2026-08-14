@@ -6,12 +6,23 @@ import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { resolveEffectiveRole } from "@/lib/super-admin-access";
 import { stringToBigint } from "@/lib/bigint";
+import { normalizeToE164 } from "@/lib/phone/e164";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
 const updateUserSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   email: z.string().email().max(254).toLowerCase().optional(),
+  phoneE164: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => {
+      if (value === null) return null;
+      const trimmed = value?.trim() ?? "";
+      if (!trimmed) return null;
+      return normalizeToE164(trimmed);
+    }),
   role: z
     .enum([
       "SAAS_SUPER_ADMIN",
@@ -52,6 +63,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         companyId: true,
         name: true,
         email: true,
+        phoneE164: true,
         role: true,
         status: true,
         avatar: true,
@@ -104,7 +116,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
   const existing = await prisma.user.findUnique({
     where: { id },
-    select: { id: true, companyId: true, name: true, email: true, role: true, status: true, branchId: true, bypassGeofence: true, canManageIntegrations: true },
+    select: { id: true, companyId: true, name: true, email: true, phoneE164: true, role: true, status: true, branchId: true, bypassGeofence: true, canManageIntegrations: true },
   });
 
   if (!existing) {
@@ -150,6 +162,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         companyId: true,
         name: true,
         email: true,
+        phoneE164: true,
         role: true,
         status: true,
         avatar: true,
@@ -181,7 +194,11 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       err.code === "P2002"
     ) {
       return NextResponse.json(
-        { error: "Ya existe un usuario con ese email" },
+        {
+          error: err.meta?.target?.toString().includes("phoneE164")
+            ? "Ya existe un usuario con ese celular"
+            : "Ya existe un usuario con ese email",
+        },
         { status: 409 }
       );
     }

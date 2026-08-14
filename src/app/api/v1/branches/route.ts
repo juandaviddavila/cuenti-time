@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
       code: true,
       address: true,
       city: true,
+      countryCode: true,
       phone: true,
       status: true,
       duplicateWindowMinutes: true,

@@ -577,6 +577,7 @@ const listBranches: ToolHandler = {
           name: true,
           code: true,
           city: true,
+          countryCode: true,
           status: true,
           latitude: true,
           longitude: true,

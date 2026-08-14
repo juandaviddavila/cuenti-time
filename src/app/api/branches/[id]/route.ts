@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
 import { scheduleWebhookEvent } from "@/lib/webhooks/dispatch";
 import { stringToBigint } from "@/lib/bigint";
+import { isCountryCode } from "@/lib/countries";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -14,6 +15,13 @@ const updateBranchSchema = z.object({
   code: z.string().min(1).max(50).optional(),
   address: z.string().max(500).optional(),
   city: z.string().max(100).optional(),
+  countryCode: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .refine((code) => isCountryCode(code), "País no válido")
+    .nullable()
+    .optional(),
   phone: z.string().max(20).optional(),
   status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
   duplicateWindowMinutes: z.number().min(0.1).max(1440).optional(),
@@ -141,6 +149,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         code: branch.code,
         status: branch.status,
         city: branch.city,
+        countryCode: branch.countryCode,
         latitude: branch.latitude,
         longitude: branch.longitude,
         radiusMeters: branch.radiusMeters,

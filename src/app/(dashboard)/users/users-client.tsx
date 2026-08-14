@@ -46,6 +46,8 @@ import {
 } from "@/components/ui/form";
 import { Checkbox } from "@/components/ui/checkbox";
 import { getInitials, formatDateTime } from "@/lib/utils";
+import { PhoneInput } from "@/components/shared/phone-input";
+import { normalizeToE164 } from "@/lib/phone/e164";
 import type { UserRole, Status } from "@/types/user";
 
 interface UserRow {
@@ -53,6 +55,7 @@ interface UserRow {
   companyId?: string;
   name: string;
   email: string;
+  phoneE164?: string;
   role: UserRole;
   status: Status;
   avatar?: string;
@@ -118,6 +121,7 @@ const AVAILABLE_ROLES: { value: UserRole; label: string }[] = [
 const createUserSchema = z.object({
   name: z.string().min(2, "Mínimo 2 caracteres"),
   email: z.string().email("Email inválido"),
+  phoneE164: z.string().optional(),
   password: z.string().min(8, "Mínimo 8 caracteres"),
   role: z.enum([
     "COMPANY_ADMIN",
@@ -132,6 +136,7 @@ const createUserSchema = z.object({
 });
 
 const editUserSchema = z.object({
+  phoneE164: z.string().optional(),
   role: z.enum([
     "COMPANY_ADMIN",
     "BRANCH_SUPERVISOR",
@@ -173,6 +178,7 @@ export function UsersClient({
     defaultValues: {
       name: "",
       email: "",
+      phoneE164: "",
       password: "",
       role: "REPORT_VIEWER",
       branchId: "",
@@ -184,6 +190,7 @@ export function UsersClient({
   const editForm = useForm<EditUserFormValues>({
     resolver: zodResolver(editUserSchema),
     defaultValues: {
+      phoneE164: "",
       role: "REPORT_VIEWER",
       branchId: "",
       bypassGeofence: false,
@@ -197,7 +204,8 @@ export function UsersClient({
       (u) =>
         !search ||
         u.name.toLowerCase().includes(q) ||
-        u.email.toLowerCase().includes(q)
+        u.email.toLowerCase().includes(q) ||
+        (u.phoneE164 ?? "").includes(q)
     );
   }, [users, search]);
 
@@ -205,6 +213,7 @@ export function UsersClient({
     form.reset({
       name: "",
       email: "",
+      phoneE164: "",
       password: "",
       role: "REPORT_VIEWER",
       branchId: "",
@@ -220,6 +229,7 @@ export function UsersClient({
       ? (user.role as EditUserFormValues["role"])
       : "REPORT_VIEWER";
     editForm.reset({
+      phoneE164: user.phoneE164 ?? "",
       role: editableRole,
       branchId: user.branchId ?? "",
       bypassGeofence: user.bypassGeofence ?? false,
@@ -239,6 +249,7 @@ export function UsersClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...values,
+          phoneE164: normalizeToE164(values.phoneE164) ?? undefined,
           companyId: currentCompanyId || undefined,
         }),
       });
@@ -275,6 +286,7 @@ export function UsersClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(canEditRole ? { role: values.role } : {}),
+          phoneE164: normalizeToE164(values.phoneE164),
           branchId: values.branchId?.trim() ? values.branchId : null,
           bypassGeofence: values.bypassGeofence,
           canManageIntegrations: values.canManageIntegrations,
@@ -387,6 +399,9 @@ export function UsersClient({
                           <p className="text-xs text-muted-foreground">
                             {u.email}
                           </p>
+                          {u.phoneE164 ? (
+                            <p className="text-xs text-muted-foreground">{u.phoneE164}</p>
+                          ) : null}
                         </div>
                       </div>
                     </TableCell>
@@ -486,6 +501,25 @@ export function UsersClient({
                         {...field}
                       />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="phoneE164"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      Celular{" "}
+                      <span className="font-normal text-muted-foreground">(WhatsApp)</span>
+                    </FormLabel>
+                    <FormControl>
+                      <PhoneInput value={field.value} onChange={field.onChange} />
+                    </FormControl>
+                    <FormDescription>
+                      Con este número podrá iniciar sesión por código de WhatsApp.
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -658,6 +692,22 @@ export function UsersClient({
                         Este rol no se puede cambiar desde aquí (p. ej. super admin).
                       </FormDescription>
                     )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editForm.control}
+                name="phoneE164"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      Celular{" "}
+                      <span className="font-normal text-muted-foreground">(WhatsApp)</span>
+                    </FormLabel>
+                    <FormControl>
+                      <PhoneInput value={field.value} onChange={field.onChange} />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}

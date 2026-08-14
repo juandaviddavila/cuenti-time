@@ -2,16 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { rateLimit } from "@/lib/rate-limit";
-import { sendEmail, loginCodeEmailHtml } from "@/lib/email";
-import {
-  generateVerificationCode,
-  getVerificationExpiry,
-  hashVerificationCode,
-} from "@/lib/verification-code";
+import { issueLoginOtp } from "@/lib/login-otp";
+import { normalizeToE164 } from "@/lib/phone/e164";
 
-const resendSchema = z.object({
-  email: z.string().trim().toLowerCase().email().max(254),
-});
+const resendSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email().max(254).optional(),
+    phoneE164: z.string().optional(),
+    channel: z.enum(["email", "whatsapp"]).optional(),
+  })
+  .refine((data) => Boolean(data.email) || Boolean(normalizeToE164(data.phoneE164)), {
+    message: "Correo o celular requerido",
+  });
 
 export async function POST(request: NextRequest) {
   const ip =
@@ -36,55 +38,60 @@ export async function POST(request: NextRequest) {
 
   const parsed = resendSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Correo inválido" }, { status: 400 });
+    return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
   }
 
-  const { email } = parsed.data;
+  const phoneE164 = normalizeToE164(parsed.data.phoneE164);
+  const channel = parsed.data.channel ?? (phoneE164 ? "whatsapp" : "email");
 
   try {
-    const user = await prisma.user.findUnique({
-      where: { email },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        status: true,
-        emailVerifiedAt: true,
-        role: true,
-      },
-    });
+    const user = phoneE164
+      ? await prisma.user.findUnique({
+          where: { phoneE164 },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phoneE164: true,
+            status: true,
+            emailVerifiedAt: true,
+            role: true,
+          },
+        })
+      : await prisma.user.findUnique({
+          where: { email: parsed.data.email ?? "" },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phoneE164: true,
+            status: true,
+            emailVerifiedAt: true,
+            role: true,
+          },
+        });
+
+    if (!user || user.status === "INACTIVE") {
+      return NextResponse.json({
+        message: "Si hay un inicio de sesión pendiente, enviaremos un nuevo código.",
+      });
+    }
 
     if (
-      !user ||
-      user.status === "INACTIVE" ||
-      (!user.emailVerifiedAt && user.role !== "FACE_REGISTRAR")
+      channel === "email" &&
+      !user.emailVerifiedAt &&
+      user.role !== "FACE_REGISTRAR"
     ) {
       return NextResponse.json({
         message: "Si hay un inicio de sesión pendiente, enviaremos un nuevo código.",
       });
     }
 
-    // Permitir reenvío también en flujo passwordless (puede no haber OTP previo
-    // si el usuario pide reenviar desde una pantalla desfasada).
-    const loginCode = generateVerificationCode();
-    const loginOtpHash = await hashVerificationCode(loginCode);
-    const loginOtpExpiresAt = getVerificationExpiry();
-
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { loginOtpHash, loginOtpExpiresAt },
-    });
-
-    await sendEmail({
-      to: user.email,
-      subject: "Tu código de acceso — cuenti time",
-      html: loginCodeEmailHtml(user.name, loginCode),
-    });
-
-    return NextResponse.json({
-      message: "Código reenviado a tu correo.",
-      ...(process.env.NODE_ENV === "development" ? { devCode: loginCode } : {}),
-    });
+    const payload = await issueLoginOtp({ user, channel });
+    if (!payload.ok) {
+      return NextResponse.json({ error: payload.error }, { status: payload.status });
+    }
+    return NextResponse.json(payload);
   } catch (error) {
     console.error("Login resend error:", error);
     return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });

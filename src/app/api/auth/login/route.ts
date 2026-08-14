@@ -3,55 +3,61 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { rateLimit } from "@/lib/rate-limit";
-import { sendEmail, loginCodeEmailHtml } from "@/lib/email";
-import {
-  generateVerificationCode,
-  getVerificationExpiry,
-  hashVerificationCode,
-} from "@/lib/verification-code";
 import { createAuthenticatedLoginResponse } from "@/lib/login-session";
+import { issueLoginOtp } from "@/lib/login-otp";
+import { normalizeToE164 } from "@/lib/phone/e164";
 
-const loginSchema = z.object({
-  email: z.string().trim().toLowerCase().email().max(254),
-  /** password = email+contraseña (y OTP salvo FACE_REGISTRAR); email_code = solo correo + código */
-  method: z.enum(["password", "email_code"]).default("password"),
-  password: z.string().min(1).max(128).optional(),
-}).superRefine((data, ctx) => {
-  if (data.method === "password" && !data.password) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["password"],
-      message: "La contraseña es requerida",
-    });
-  }
-});
+const loginSchema = z
+  .object({
+    method: z.enum(["password", "email_code", "whatsapp"]).default("password"),
+    email: z.string().trim().toLowerCase().email().max(254).optional(),
+    password: z.string().min(1).max(128).optional(),
+    phoneE164: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.method === "whatsapp") {
+      if (!normalizeToE164(data.phoneE164)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["phoneE164"],
+          message: "Ingresa un celular válido",
+        });
+      }
+      return;
+    }
+    if (!data.email) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["email"],
+        message: "El correo es requerido",
+      });
+    }
+    if (data.method === "password" && !data.password) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["password"],
+        message: "La contraseña es requerida",
+      });
+    }
+  });
 
-/** Roles que, con contraseña, inician sesión sin OTP por correo. */
 const LOGIN_WITHOUT_OTP_ROLES = new Set(["FACE_REGISTRAR"]);
 
-async function issueLoginCode(user: { id: bigint; name: string; email: string }) {
-  const loginCode = generateVerificationCode();
-  const loginOtpHash = await hashVerificationCode(loginCode);
-  const loginOtpExpiresAt = getVerificationExpiry();
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { loginOtpHash, loginOtpExpiresAt },
-  });
-
-  await sendEmail({
-    to: user.email,
-    subject: "Tu código de acceso — cuenti time",
-    html: loginCodeEmailHtml(user.name, loginCode),
-  });
-
-  return {
-    requiresLoginCode: true as const,
-    message: "Te enviamos un código de 6 dígitos a tu correo.",
-    email: user.email,
-    ...(process.env.NODE_ENV === "development" ? { devCode: loginCode } : {}),
-  };
-}
+const userSelect = {
+  id: true,
+  name: true,
+  email: true,
+  phoneE164: true,
+  password: true,
+  status: true,
+  emailVerifiedAt: true,
+  role: true,
+  companyId: true,
+  avatar: true,
+  bypassGeofence: true,
+  canManageIntegrations: true,
+  createdAt: true,
+} as const;
 
 export async function POST(request: NextRequest) {
   const ip =
@@ -86,32 +92,42 @@ export async function POST(request: NextRequest) {
   }
 
   const { email, password, method } = parsed.data;
+  const phoneE164 = normalizeToE164(parsed.data.phoneE164);
 
   try {
-    const user = await prisma.user.findUnique({
-      where: { email },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        password: true,
-        status: true,
-        emailVerifiedAt: true,
-        role: true,
-        companyId: true,
-        avatar: true,
-        bypassGeofence: true,
-        canManageIntegrations: true,
-        createdAt: true,
-      },
-    });
+    const user =
+      method === "whatsapp"
+        ? await prisma.user.findUnique({
+            where: { phoneE164: phoneE164 ?? "__none__" },
+            select: userSelect,
+          })
+        : await prisma.user.findUnique({
+            where: { email: email ?? "" },
+            select: userSelect,
+          });
 
-    // ── Login solo con código al correo ────────────────────────────────────
-    if (method === "email_code") {
-      // Respuesta genérica si no existe / inactivo (evita enumeración)
+    if (method === "whatsapp") {
       if (!user || user.status === "INACTIVE") {
         return NextResponse.json({
           requiresLoginCode: true,
+          channel: "whatsapp",
+          message: "Si el celular está registrado, te enviamos un código de 6 dígitos.",
+          phoneE164,
+        });
+      }
+
+      const payload = await issueLoginOtp({ user, channel: "whatsapp" });
+      if (!payload.ok) {
+        return NextResponse.json({ error: payload.error }, { status: payload.status });
+      }
+      return NextResponse.json(payload);
+    }
+
+    if (method === "email_code") {
+      if (!user || user.status === "INACTIVE") {
+        return NextResponse.json({
+          requiresLoginCode: true,
+          channel: "email",
           message: "Si el correo está registrado, te enviamos un código de 6 dígitos.",
           email,
         });
@@ -128,11 +144,13 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const payload = await issueLoginCode(user);
+      const payload = await issueLoginOtp({ user, channel: "email" });
+      if (!payload.ok) {
+        return NextResponse.json({ error: payload.error }, { status: payload.status });
+      }
       return NextResponse.json(payload);
     }
 
-    // ── Login con contraseña ───────────────────────────────────────────────
     const dummyHash =
       "$2b$12$invalidhashtopreventtimingattacksonuserenumeration00000";
     const passwordValid = await bcrypt.compare(
@@ -155,12 +173,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Registrador facial: login directo sin código por correo
     if (LOGIN_WITHOUT_OTP_ROLES.has(user.role)) {
       return createAuthenticatedLoginResponse(user);
     }
 
-    const payload = await issueLoginCode(user);
+    const payload = await issueLoginOtp({ user, channel: "email" });
+    if (!payload.ok) {
+      return NextResponse.json({ error: payload.error }, { status: payload.status });
+    }
     return NextResponse.json(payload);
   } catch (error) {
     console.error("Login error:", error);

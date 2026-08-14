@@ -4,15 +4,20 @@ import { prisma } from "@/lib/prisma";
 import { rateLimit } from "@/lib/rate-limit";
 import { verifyVerificationCode } from "@/lib/verification-code";
 import { createAuthenticatedLoginResponse } from "@/lib/login-session";
+import { normalizeToE164 } from "@/lib/phone/e164";
 
-const verifyLoginSchema = z.object({
-  email: z.string().trim().toLowerCase().email().max(254),
-  // Clients sometimes send OTP as JSON number; coerce to string.
-  code: z.coerce
-    .string()
-    .trim()
-    .regex(/^\d{6}$/, "El código debe tener 6 dígitos"),
-});
+const verifyLoginSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email().max(254).optional(),
+    phoneE164: z.string().optional(),
+    code: z.coerce
+      .string()
+      .trim()
+      .regex(/^\d{6}$/, "El código debe tener 6 dígitos"),
+  })
+  .refine((data) => Boolean(data.email) || Boolean(normalizeToE164(data.phoneE164)), {
+    message: "Correo o celular requerido",
+  });
 
 export async function POST(request: NextRequest) {
   const ip =
@@ -43,29 +48,53 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const phoneE164 = normalizeToE164(parsed.data.phoneE164);
   const { email, code } = parsed.data;
 
   try {
-    const user = await prisma.user.findUnique({
-      where: { email },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        companyId: true,
-        avatar: true,
-        status: true,
-        bypassGeofence: true,
-        canManageIntegrations: true,
-        createdAt: true,
-        emailVerifiedAt: true,
-        loginOtpHash: true,
-        loginOtpExpiresAt: true,
-      },
-    });
+    const user = phoneE164
+      ? await prisma.user.findUnique({
+          where: { phoneE164 },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            companyId: true,
+            avatar: true,
+            status: true,
+            bypassGeofence: true,
+            canManageIntegrations: true,
+            createdAt: true,
+            emailVerifiedAt: true,
+            loginOtpHash: true,
+            loginOtpExpiresAt: true,
+          },
+        })
+      : await prisma.user.findUnique({
+          where: { email: email ?? "" },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            companyId: true,
+            avatar: true,
+            status: true,
+            bypassGeofence: true,
+            canManageIntegrations: true,
+            createdAt: true,
+            emailVerifiedAt: true,
+            loginOtpHash: true,
+            loginOtpExpiresAt: true,
+          },
+        });
 
-    if (!user || user.status === "INACTIVE" || !user.emailVerifiedAt) {
+    if (!user || user.status === "INACTIVE") {
+      return NextResponse.json({ error: "Código inválido o vencido" }, { status: 400 });
+    }
+
+    if (!phoneE164 && !user.emailVerifiedAt) {
       return NextResponse.json({ error: "Código inválido o vencido" }, { status: 400 });
     }
 

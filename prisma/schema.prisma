@@ -72,6 +72,7 @@ model Branch {
   code                   String
   address                String?
   city                   String?
+  countryCode            String?
   phone                  String?
   managerName            String?
   status                 Status              @default(ACTIVE)
@@ -324,6 +325,7 @@ model User {
   companyId              BigInt?
   name                   String
   email                  String     @unique
+  phoneE164              String?    @unique
   password               String
   role                   UserRole   @default(REPORT_VIEWER)
   status                 Status     @default(ACTIVE)
@@ -350,6 +352,7 @@ model User {
   company                Company?   @relation(fields: [companyId], references: [id])
 
   @@index([email])
+  @@index([phoneE164])
   @@index([companyId])
   @@index([role])
 }
