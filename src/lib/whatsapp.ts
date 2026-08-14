@@ -72,18 +72,29 @@ export async function sendWhatsAppLoginOtp(input: {
     });
 
     const payload = (await response.json().catch(() => ({}))) as {
-      error?: { message?: string };
+      messages?: Array<{ id?: string }>;
+      error?: {
+        message?: string;
+        code?: number;
+        type?: string;
+        error_data?: { details?: string };
+      };
     };
 
     if (!response.ok) {
-      console.warn("[whatsapp] OTP send failed", payload.error?.message ?? response.status);
-      return {
-        ok: false,
-        reason: "provider_error",
-        message: payload.error?.message ?? `HTTP ${response.status}`,
-      };
+      const details = payload.error?.error_data?.details;
+      const message = [payload.error?.message, details].filter(Boolean).join(" — ")
+        || `HTTP ${response.status}`;
+      console.warn("[whatsapp] OTP send failed", {
+        status: response.status,
+        code: payload.error?.code,
+        type: payload.error?.type,
+        message,
+      });
+      return { ok: false, reason: "provider_error", message };
     }
 
+    console.info("[whatsapp] OTP sent", { toSuffix: to.slice(-4) });
     return { ok: true };
   } catch {
     return { ok: false, reason: "provider_error", message: "network_error" };

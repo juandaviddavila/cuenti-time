@@ -30,9 +30,11 @@ module.exports = {
       name: 'cuenti-time-mcp',
       cwd: '/home/ubuntu/app/cuenti-time_compilado/packages/hr-mcp-server',
       // Node ≥20: carga packages/hr-mcp-server/.env (DATABASE_URL, MCP_*)
+      // fork: el binario ESM no sobrevive cluster_mode de PM2 (muere sin logs).
       script: 'dist/packages/hr-mcp-server/src/http.js',
       interpreter: 'node',
       interpreter_args: '--env-file=.env',
+      exec_mode: 'fork',
       instances: 1,
       autorestart: true,
       env: {

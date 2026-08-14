@@ -45,39 +45,22 @@ export async function issueLoginOtp(input: {
     }
 
     if (!whatsappConfigured()) {
-      if (process.env.NODE_ENV === "development") {
-        return {
-          ok: true,
-          requiresLoginCode: true,
-          channel: "whatsapp",
-          message: "WhatsApp no está configurado. Usa el código de desarrollo.",
-          phoneE164: maskPhoneE164(phone),
-          devCode: loginCode,
-        };
-      }
+      console.warn("[whatsapp] skip send: WHATSAPP_ENABLED/token ausentes");
       return {
         ok: false,
         status: 503,
-        error: "WhatsApp no está disponible. Usa correo o contraseña.",
+        error: "WhatsApp no está configurado. Revisa WHATSAPP_ENABLED y el token, y reinicia el servidor.",
       };
     }
 
     const sent = await sendWhatsAppLoginOtp({ toE164: phone, code: loginCode });
     if (!sent.ok) {
-      if (process.env.NODE_ENV === "development") {
-        return {
-          ok: true,
-          requiresLoginCode: true,
-          channel: "whatsapp",
-          message: "No se pudo enviar por WhatsApp. Usa el código de desarrollo.",
-          phoneE164: maskPhoneE164(phone),
-          devCode: loginCode,
-        };
-      }
       return {
         ok: false,
         status: 503,
-        error: "No se pudo enviar el código por WhatsApp. Intenta de nuevo.",
+        error: sent.message
+          ? `No se pudo enviar el WhatsApp: ${sent.message}`
+          : "No se pudo enviar el código por WhatsApp. Intenta de nuevo.",
       };
     }
 

@@ -19,6 +19,8 @@ Defines the branch form and table field set after removing the redundant `manage
 | R-009 | `address` SHALL remain in Zod schemas, TypeScript types, API response schemas, and form state | SHALL |
 | R-010 | Seed data MUST NOT set `managerName` on branch records | MUST |
 | R-011 | Field `duplicateWindowMinutes` MUST show a FormDescription explaining anti-double-tap behavior | MUST |
+| R-012 | Branch MUST persist `countryCode` (ISO 3166-1 alpha-2); default `CO` | MUST |
+| R-013 | Address autocomplete MUST use `includedRegionCodes` for the selected country and MUST NOT send a country-scale `locationBias` (Places max circle is 50 km) | MUST |
 
 ## Scenarios
 
@@ -94,3 +96,16 @@ Defines the branch form and table field set after removing the redundant `manage
 - GIVEN a user opens the branch create/edit form
 - WHEN the `duplicateWindowMinutes` field is visible
 - THEN a FormDescription explains it is the minimum time between same-employee marks to avoid accidental duplicates
+
+### S-012: Country defaults to Colombia
+
+- GIVEN a user opens "Nueva sucursal"
+- WHEN the form renders
+- THEN the country combobox is set to `CO`
+
+### S-013: Places search is country-scoped without huge locationBias
+
+- GIVEN the branch country is `CO`
+- WHEN the user searches an address
+- THEN Autocomplete is called with `includedRegionCodes: ["co"]`
+- AND no `locationBias` circle larger than 50_000 m is sent
