@@ -17,6 +17,11 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/shared/page-header";
+import {
+  DEFAULT_FACE_MATCH_THRESHOLD,
+  FACE_MATCH_THRESHOLD_MAX,
+  FACE_MATCH_THRESHOLD_MIN,
+} from "@/lib/face-match-threshold";
 import type { UserRole } from "@/types/user";
 
 const companySchema = z.object({
@@ -36,7 +41,10 @@ const attendanceOpsSchema = z.object({
     .string()
     .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "Usa formato HH:mm (ej. 23:00)"),
   lateReportRecipients: z.string().max(2000).optional(),
-  faceMatchThreshold: z.coerce.number().min(0.2).max(1.2),
+  faceMatchThreshold: z.coerce
+    .number()
+    .min(FACE_MATCH_THRESHOLD_MIN)
+    .max(FACE_MATCH_THRESHOLD_MAX),
 });
 type AttendanceOpsForm = z.infer<typeof attendanceOpsSchema>;
 
@@ -136,7 +144,8 @@ export function SettingsClient({
       earlyLeaveToleranceMinutes: company?.earlyLeaveToleranceMinutes ?? 10,
       lateReportTime: company?.lateReportTime ?? "23:00",
       lateReportRecipients: recipientsToText(company?.lateReportRecipients),
-      faceMatchThreshold: company?.faceMatchThreshold ?? 0.6,
+      faceMatchThreshold:
+        company?.faceMatchThreshold ?? DEFAULT_FACE_MATCH_THRESHOLD,
     },
   });
 
@@ -444,15 +453,24 @@ export function SettingsClient({
                         <FormItem>
                           <FormLabel>Umbral de reconocimiento facial</FormLabel>
                           <FormDescription>
-                            Distancia máxima para aceptar un match (menor = más estricto).
-                            Recomendado <strong>0.6</strong>. Rango 0.2–1.2. No es un porcentaje:
-                            valores típicos 0.45 (estricto) a 0.7 (permisivo).
+                            Distancia coseno máxima para aceptar un match (menor = más
+                            estricto). Con confusiones usa <strong>0.40–0.45</strong>. El
+                            sistema además aplica un techo duro de <strong>0.55</strong>,
+                            margen 0.10 entre 1.º/2.º y ratio 1.2× para rechazar rostros
+                            ambiguos o solo “parecidos”. Usa{" "}
+                            <Link
+                              href="/settings/face-diagnostics"
+                              className="font-medium underline underline-offset-4"
+                            >
+                              Diagnóstico facial
+                            </Link>{" "}
+                            para calibrarlo con tus propios empleados.
                           </FormDescription>
                           <FormControl>
                             <Input
                               type="number"
-                              min={0.2}
-                              max={1.2}
+                              min={FACE_MATCH_THRESHOLD_MIN}
+                              max={FACE_MATCH_THRESHOLD_MAX}
                               step={0.05}
                               disabled={!canManageCompany}
                               {...field}
@@ -463,6 +481,20 @@ export function SettingsClient({
                         </FormItem>
                       )}
                     />
+                    <div className="rounded-lg border bg-muted/40 p-4 text-sm space-y-1">
+                      <p className="font-medium">Motor facial ArcFace (512 dimensiones)</p>
+                      <p className="text-muted-foreground">
+                        Si algún empleado dejó de ser reconocido tras la actualización,
+                        reconstruye su vector desde la foto guardada en{" "}
+                        <Link
+                          href="/settings/face-migration"
+                          className="font-medium text-foreground underline underline-offset-4"
+                        >
+                          Migración facial
+                        </Link>
+                        .
+                      </p>
+                    </div>
                     <FormField
                       control={opsForm.control}
                       name="earlyLeaveToleranceMinutes"

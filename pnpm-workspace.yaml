@@ -9,6 +9,7 @@ allowBuilds:
   core-js: true
   esbuild: false
   prisma: true
+  protobufjs: true
   unrs-resolver: true
 minimumReleaseAgeExclude:
   - lucide-react@1.22.0

@@ -107,13 +107,17 @@ export async function POST(request: NextRequest) {
           });
 
     if (method === "whatsapp") {
-      if (!user || user.status === "INACTIVE") {
-        return NextResponse.json({
-          requiresLoginCode: true,
-          channel: "whatsapp",
-          message: "Si el celular está registrado, te enviamos un código de 6 dígitos.",
-          phoneE164,
-        });
+      if (!user) {
+        return NextResponse.json(
+          { error: "El celular no está registrado", code: "PHONE_NOT_FOUND" },
+          { status: 404 }
+        );
+      }
+      if (user.status === "INACTIVE") {
+        return NextResponse.json(
+          { error: "Esta cuenta está inactiva", code: "ACCOUNT_INACTIVE" },
+          { status: 403 }
+        );
       }
 
       const payload = await issueLoginOtp({ user, channel: "whatsapp" });
@@ -124,13 +128,17 @@ export async function POST(request: NextRequest) {
     }
 
     if (method === "email_code") {
-      if (!user || user.status === "INACTIVE") {
-        return NextResponse.json({
-          requiresLoginCode: true,
-          channel: "email",
-          message: "Si el correo está registrado, te enviamos un código de 6 dígitos.",
-          email,
-        });
+      if (!user) {
+        return NextResponse.json(
+          { error: "El correo no está registrado", code: "EMAIL_NOT_FOUND" },
+          { status: 404 }
+        );
+      }
+      if (user.status === "INACTIVE") {
+        return NextResponse.json(
+          { error: "Esta cuenta está inactiva", code: "ACCOUNT_INACTIVE" },
+          { status: 403 }
+        );
       }
 
       if (!user.emailVerifiedAt && !LOGIN_WITHOUT_OTP_ROLES.has(user.role)) {
@@ -158,7 +166,19 @@ export async function POST(request: NextRequest) {
       user?.password ?? dummyHash
     );
 
-    if (!user || user.status === "INACTIVE" || !passwordValid) {
+    if (!user) {
+      return NextResponse.json(
+        { error: "El correo no está registrado", code: "EMAIL_NOT_FOUND" },
+        { status: 404 }
+      );
+    }
+    if (user.status === "INACTIVE") {
+      return NextResponse.json(
+        { error: "Esta cuenta está inactiva", code: "ACCOUNT_INACTIVE" },
+        { status: 403 }
+      );
+    }
+    if (!passwordValid) {
       return NextResponse.json({ error: "Credenciales inválidas" }, { status: 401 });
     }
 

@@ -3,15 +3,16 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession, getCompanyFilter } from "@/lib/server-auth";
-import { toPgVector } from "@/lib/ai/pgvector";
+import { FACE_EMBEDDING_DIMENSIONS, toPgVector } from "@/lib/ai/pgvector";
 import {
   clampFaceMatchThreshold,
+  decideFaceMatch,
   DEFAULT_FACE_MATCH_THRESHOLD,
 } from "@/lib/face-match-threshold";
 import { stringToBigint } from "@/lib/bigint";
 
 const searchFaceSchema = z.object({
-  descriptor: z.array(z.number()).length(128),
+  descriptor: z.array(z.number()).length(FACE_EMBEDDING_DIMENSIONS),
   branchId: z.coerce.bigint().positive().optional(),
 });
 
@@ -61,7 +62,9 @@ export async function POST(request: NextRequest) {
   }
 
   const companyFilter = getCompanyFilter(session);
-  const threshold = await resolveCompanyThreshold(session.companyId ? stringToBigint(session.companyId) : null);
+  const companyThreshold = await resolveCompanyThreshold(
+    session.companyId ? stringToBigint(session.companyId) : null
+  );
 
   const companyWhere = companyFilter.companyId
     ? Prisma.sql`AND e."companyId" = ${companyFilter.companyId}`
@@ -78,20 +81,48 @@ export async function POST(request: NextRequest) {
       p."name" AS "position",
       e."photo",
       e."branchId"::text,
-      (e."faceEmbedding" <-> ${queryVector}::vector) AS "distance"
+      (e."faceEmbedding" <=> ${queryVector}::vector) AS "distance"
     FROM "Employee" e
     LEFT JOIN "Position" p ON p."id" = e."positionId"
     WHERE e."status" = 'ACTIVE'
       ${companyWhere}
       ${branchWhere}
       AND e."faceEmbedding" IS NOT NULL
-    ORDER BY e."faceEmbedding" <-> ${queryVector}::vector
-    LIMIT 1
+    ORDER BY e."faceEmbedding" <=> ${queryVector}::vector
+    LIMIT 2
   `;
 
   const best = matches[0];
-  if (!best || best.distance > threshold) {
-    return NextResponse.json({ match: null, threshold });
+  const second = matches[1];
+
+  if (!best) {
+    return NextResponse.json({
+      match: null,
+      reason: "no_match",
+      threshold: companyThreshold,
+    });
+  }
+
+  const decision = decideFaceMatch({
+    bestDistance: Number(best.distance),
+    secondDistance: second ? Number(second.distance) : null,
+    companyThreshold,
+  });
+
+  if (!decision.ok) {
+    return NextResponse.json({
+      match: null,
+      reason: decision.reason,
+      threshold: companyThreshold,
+      effectiveThreshold: decision.effectiveThreshold,
+      margin: decision.margin,
+      candidates: {
+        best: { employeeId: best.employeeId, distance: Number(best.distance) },
+        second: second
+          ? { employeeId: second.employeeId, distance: Number(second.distance) }
+          : null,
+      },
+    });
   }
 
   return NextResponse.json({
@@ -101,8 +132,12 @@ export async function POST(request: NextRequest) {
       position: best.position,
       photo: best.photo,
       branchId: best.branchId,
-      distance: best.distance,
+      distance: Number(best.distance),
+      secondDistance: second ? Number(second.distance) : null,
     },
-    threshold,
+    reason: "match",
+    threshold: companyThreshold,
+    effectiveThreshold: decision.effectiveThreshold,
+    margin: decision.margin,
   });
 }

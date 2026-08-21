@@ -139,6 +139,7 @@ tar -czf "$OUTPUT" \
   deploy/nginx \
   prisma/schema.prisma \
   prisma/pgvector.sql \
+  prisma/migrate-arcface-512.sql \
   .next \
   public \
   .env.example \
@@ -170,6 +171,31 @@ if ! tar -tzf "$OUTPUT" | grep -E '(^|/)packages/hr-mcp-server/dist/packages/hr-
   rm -f "$OUTPUT"
   exit 1
 fi
+
+# Motor facial ArcFace: ONNX + runtime WASM + detección face-api + SQL 512-D
+missing_face=()
+for face_path in \
+  public/models/w600k_mbf.onnx \
+  public/models/tiny_face_detector_model.bin \
+  public/models/face_landmark_68_model.bin \
+  public/ort/ort.wasm.bundle.min.mjs \
+  public/ort/ort-wasm-simd-threaded.wasm \
+  prisma/migrate-arcface-512.sql
+do
+  if ! tar -tzf "$OUTPUT" | grep -E "(^|/)${face_path}$" >/dev/null; then
+    missing_face+=("$face_path")
+  fi
+done
+if [ "${#missing_face[@]}" -gt 0 ]; then
+  echo "Error: el tar no incluye assets faciales ArcFace:"
+  for p in "${missing_face[@]}"; do
+    echo "  - $p"
+  done
+  echo "Ejecuta: pnpm face:setup"
+  rm -f "$OUTPUT"
+  exit 1
+fi
+echo "==> Assets faciales en el tar (ONNX + ORT + face-api + migrate-arcface-512.sql) OK"
 
 echo ""
 echo "Contenido .env* en el tar (solo examples, OK):"

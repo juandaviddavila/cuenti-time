@@ -4,6 +4,10 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/server-auth";
 import { createAuditLog } from "@/lib/audit";
+import {
+  FACE_MATCH_THRESHOLD_MAX,
+  FACE_MATCH_THRESHOLD_MIN,
+} from "@/lib/face-match-threshold";
 import { stringToBigint } from "@/lib/bigint";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -28,7 +32,11 @@ const updateCompanySchema = z.object({
     .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "Formato HH:mm")
     .optional(),
   lateReportRecipients: z.string().max(2000).optional().nullable(),
-  faceMatchThreshold: z.number().min(0.2).max(1.2).optional(),
+  faceMatchThreshold: z
+    .number()
+    .min(FACE_MATCH_THRESHOLD_MIN)
+    .max(FACE_MATCH_THRESHOLD_MAX)
+    .optional(),
 });
 
 type RouteParams = { params: { id: string } };

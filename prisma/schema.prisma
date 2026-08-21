@@ -40,8 +40,8 @@ model Company {
   lateReportRecipients           String?             // JSON array de emails
   lateReportTime                 String              @default("23:00")
 
-  /// Distancia euclidiana máxima para match facial (face-api / pgvector). Menor = más estricto. Default 0.6.
-  faceMatchThreshold             Float               @default(0.6)
+  /// Distancia coseno máxima para match facial (ArcFace 512-D / pgvector `<=>`). Menor = más estricto. Default 0.5.
+  faceMatchThreshold             Float               @default(0.5)
   
   createdAt               DateTime            @default(now())
   updatedAt               DateTime            @updatedAt
@@ -247,7 +247,7 @@ model Employee {
   notes              String?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
-  faceEmbedding      Unsupported("vector(128)")?
+  faceEmbedding      Unsupported("vector(512)")?
   attendances        AttendanceRecord[]
   branch             Branch              @relation(fields: [branchId], references: [id])
   company            Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)

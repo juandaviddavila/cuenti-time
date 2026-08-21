@@ -1,4 +1,5 @@
-export const FACE_EMBEDDING_DIMENSIONS = 128;
+/** ArcFace MobileFaceNet (w600k_mbf) produce embeddings de 512 dimensiones. */
+export const FACE_EMBEDDING_DIMENSIONS = 512;
 
 export function normalizeFaceEmbedding(value: number[]) {
   if (value.length !== FACE_EMBEDDING_DIMENSIONS) {

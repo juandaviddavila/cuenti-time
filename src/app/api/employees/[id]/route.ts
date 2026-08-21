@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/server-auth";
-import { toPgVector } from "@/lib/ai/pgvector";
+import { FACE_EMBEDDING_DIMENSIONS, toPgVector } from "@/lib/ai/pgvector";
 import { createAuditLog } from "@/lib/audit";
 import { canRegisterAdditionalFace, requireActiveCompanySubscription } from "@/lib/subscription";
 import { scheduleWebhookEvent } from "@/lib/webhooks/dispatch";
@@ -33,7 +33,11 @@ const updateEmployeeSchema = z.object({
   biometricConsentAt: z.string().datetime().optional().nullable(),
   // Puede ser cuid o id fijo del seed/registro (p.ej. pos-general-<companyId>)
   positionId: z.coerce.bigint().positive().nullish().or(z.literal("").transform(() => null)),
-  faceEmbedding: z.array(z.number()).length(128).optional().nullable(),
+  faceEmbedding: z
+    .array(z.number())
+    .length(FACE_EMBEDDING_DIMENSIONS)
+    .optional()
+    .nullable(),
   // Acepta BigInt o strings legacy (`face_…`); solo persiste numéricos positivos
   faceEmbeddingId: z
     .union([z.coerce.bigint().positive(), z.string(), z.null()])

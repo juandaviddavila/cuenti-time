@@ -13,7 +13,13 @@ import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PageHeader } from "@/components/shared/page-header";
 import { cn, getInitials, sleep } from "@/lib/utils";
-import { loadModels, detectFace, findBestMatch, isMatch, isModelsLoaded } from "@/lib/ai/face-api-service";
+import {
+  loadModels,
+  detectFace,
+  findBestMatch,
+  isConfidentMatch,
+  isModelsLoaded,
+} from "@/lib/ai/face-api-service";
 import { DEFAULT_FACE_MATCH_THRESHOLD } from "@/lib/face-match-threshold";
 import { checkLiveness } from "@/lib/ai/openrouter-service";
 import {
@@ -58,15 +64,32 @@ interface FaceSearchMatch {
   distance: number;
 }
 
-async function searchFaceInDatabase(descriptor: number[]): Promise<FaceSearchMatch | null> {
-  const response = await fetch("/api/face/search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ descriptor }),
-  });
-  if (!response.ok) return null;
-  const data = await response.json() as { match?: FaceSearchMatch | null };
-  return data.match ?? null;
+type FaceSearchOutcome =
+  | { status: "match"; match: FaceSearchMatch }
+  | { status: "ambiguous" }
+  | { status: "weak" }
+  | { status: "none" }
+  | { status: "error" };
+
+async function searchFaceInDatabase(descriptor: number[]): Promise<FaceSearchOutcome> {
+  try {
+    const response = await fetch("/api/face/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ descriptor }),
+    });
+    if (!response.ok) return { status: "error" };
+    const data = (await response.json()) as {
+      match?: FaceSearchMatch | null;
+      reason?: string;
+    };
+    if (data.reason === "ambiguous") return { status: "ambiguous" };
+    if (data.reason === "weak_match") return { status: "weak" };
+    if (data.match) return { status: "match", match: data.match };
+    return { status: "none" };
+  } catch {
+    return { status: "error" };
+  }
 }
 
 async function descriptorFromPhoto(photo: string): Promise<number[] | null> {
@@ -321,8 +344,24 @@ function FacialRegistrationContent() {
 
         setScanMessage("Rostro estable. Buscando en pgvector...");
 
-        let matched: RegisteredFace | FaceSearchMatch | null = await searchFaceInDatabase(result.descriptor);
-        if (!matched) {
+        const serverOutcome = await searchFaceInDatabase(result.descriptor);
+        let matched: RegisteredFace | FaceSearchMatch | null = null;
+
+        if (serverOutcome.status === "ambiguous") {
+          stableHitsRef.current = 0;
+          setScanMessage("Rostro ambiguo — mire de frente e intente de nuevo");
+          return;
+        }
+
+        if (serverOutcome.status === "weak") {
+          stableHitsRef.current = 0;
+          setScanMessage("Coincidencia débil — acerque la cara e intente de nuevo");
+          return;
+        }
+
+        if (serverOutcome.status === "match") {
+          matched = serverOutcome.match;
+        } else if (serverOutcome.status === "error") {
           const threshold = faceMatchThresholdRef.current;
           const match = findBestMatch(
             result.descriptor,
@@ -332,13 +371,23 @@ function FacialRegistrationContent() {
             threshold
           );
 
-          if (!match || !isMatch(match.distance, threshold)) {
+          if (match?.ambiguous) {
+            stableHitsRef.current = 0;
+            setScanMessage("Rostro ambiguo — mire de frente e intente de nuevo");
+            return;
+          }
+
+          if (!isConfidentMatch(match, threshold) || !match) {
             stableHitsRef.current = 0;
             setScanMessage(match ? `Sin coincidencia (${match.distance.toFixed(2)})` : "Sin coincidencia");
             return;
           }
 
           matched = registeredFacesRef.current.find(e => e.employeeId === match.employeeId) ?? null;
+        } else {
+          stableHitsRef.current = 0;
+          setScanMessage("Sin coincidencia");
+          return;
         }
 
         if (!matched) {

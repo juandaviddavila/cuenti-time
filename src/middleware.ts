@@ -53,7 +53,7 @@ const PUBLIC_PATHS = [
 
 // File extensions that should always be served without auth checks.
 // Using an explicit allowlist is safer than pathname.includes(".").
-const STATIC_EXTENSIONS = /\.(ico|png|jpg|jpeg|svg|webp|gif|css|js|woff|woff2|ttf|otf|json|txt|xml|webmanifest|map|bin)$/i;
+const STATIC_EXTENSIONS = /\.(ico|png|jpg|jpeg|svg|webp|gif|css|js|mjs|woff|woff2|ttf|otf|json|txt|xml|webmanifest|map|bin|onnx|wasm)$/i;
 
 /**
  * Rebuilds the Cookie header so Server Components in THIS request
@@ -150,7 +150,12 @@ export async function middleware(request: NextRequest) {
   }
 
   // Allow Next.js internals
-  if (pathname.startsWith("/_next/") || pathname.startsWith("/icons/") || pathname.startsWith("/models/")) {
+  if (
+    pathname.startsWith("/_next/") ||
+    pathname.startsWith("/icons/") ||
+    pathname.startsWith("/models/") ||
+    pathname.startsWith("/ort/")
+  ) {
     return NextResponse.next();
   }
 

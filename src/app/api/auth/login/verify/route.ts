@@ -90,21 +90,31 @@ export async function POST(request: NextRequest) {
           },
         });
 
-    if (!user || user.status === "INACTIVE") {
-      return NextResponse.json({ error: "Código inválido o vencido" }, { status: 400 });
+    if (!user) {
+      return NextResponse.json(
+        {
+          error: phoneE164
+            ? "El celular no está registrado"
+            : "El correo no está registrado",
+        },
+        { status: 404 }
+      );
     }
 
-    if (!phoneE164 && !user.emailVerifiedAt) {
-      return NextResponse.json({ error: "Código inválido o vencido" }, { status: 400 });
+    if (user.status === "INACTIVE") {
+      return NextResponse.json(
+        { error: "Esta cuenta está inactiva", code: "ACCOUNT_INACTIVE" },
+        { status: 403 }
+      );
     }
 
     if (
       !user.loginOtpHash ||
       !user.loginOtpExpiresAt ||
-      user.loginOtpExpiresAt <= new Date()
+      user.loginOtpExpiresAt.getTime() <= Date.now()
     ) {
       return NextResponse.json(
-        { error: "El código venció. Inicia sesión de nuevo para recibir uno nuevo." },
+        { error: "El código venció. Solicita uno nuevo." },
         { status: 400 }
       );
     }
@@ -112,6 +122,15 @@ export async function POST(request: NextRequest) {
     const valid = await verifyVerificationCode(code, user.loginOtpHash);
     if (!valid) {
       return NextResponse.json({ error: "Código incorrecto" }, { status: 400 });
+    }
+
+    // Un OTP de login por correo prueba posesión del inbox: marcar verificado si faltaba.
+    // (Antes se bloqueaba con "Código inválido o vencido" aunque el código fuera correcto.)
+    if (!phoneE164 && !user.emailVerifiedAt) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { emailVerifiedAt: new Date() },
+      });
     }
 
     return createAuthenticatedLoginResponse(user);

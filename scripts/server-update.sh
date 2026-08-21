@@ -10,6 +10,8 @@ set -euo pipefail
 
 # Node v24 — pnpm install / prisma generate / next
 export NVM_DIR="$HOME/.nvm"
+# Sin TTY (ssh no interactivo / CI), pnpm no pregunta al purgar node_modules.
+export CI="${CI:-true}"
 if [ -s "$NVM_DIR/nvm.sh" ]; then
   # shellcheck disable=SC1091
   source "$NVM_DIR/nvm.sh"

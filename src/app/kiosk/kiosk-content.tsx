@@ -10,7 +10,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn, formatTime, getInitials } from "@/lib/utils";
-import { loadModels, detectFace, findBestMatch, isMatch, isModelsLoaded } from "@/lib/ai/face-api-service";
+import {
+  loadModels,
+  detectFace,
+  findBestMatch,
+  isConfidentMatch,
+  isModelsLoaded,
+} from "@/lib/ai/face-api-service";
 import { DEFAULT_FACE_MATCH_THRESHOLD } from "@/lib/face-match-threshold";
 import { checkLiveness } from "@/lib/ai/openrouter-service";
 import {
@@ -46,15 +52,35 @@ interface FaceSearchMatch {
 }
 interface KioskResult { type: AttType; employee: { id: string; fullName: string; position?: string | null; photo?: string | null }; time: string; }
 
-async function searchFaceInDatabase(descriptor: number[], branchId: string): Promise<FaceSearchMatch | null> {
-  const response = await fetch("/api/face/search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ descriptor, branchId }),
-  });
-  if (!response.ok) return null;
-  const data = await response.json() as { match?: FaceSearchMatch | null };
-  return data.match ?? null;
+type FaceSearchOutcome =
+  | { status: "match"; match: FaceSearchMatch }
+  | { status: "ambiguous" }
+  | { status: "weak" }
+  | { status: "none" }
+  | { status: "error" };
+
+async function searchFaceInDatabase(
+  descriptor: number[],
+  branchId: string
+): Promise<FaceSearchOutcome> {
+  try {
+    const response = await fetch("/api/face/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ descriptor, branchId }),
+    });
+    if (!response.ok) return { status: "error" };
+    const data = (await response.json()) as {
+      match?: FaceSearchMatch | null;
+      reason?: string;
+    };
+    if (data.reason === "ambiguous") return { status: "ambiguous" };
+    if (data.reason === "weak_match") return { status: "weak" };
+    if (data.match) return { status: "match", match: data.match };
+    return { status: "none" };
+  } catch {
+    return { status: "error" };
+  }
 }
 
 async function descriptorFromPhoto(photo: string): Promise<number[] | null> {
@@ -240,13 +266,23 @@ export default function KioskPage() {
           return;
         }
 
-        const serverMatch = await searchFaceInDatabase(detection.descriptor, branchId);
-        if (serverMatch) {
-          void runIdentification(serverMatch);
+        const serverOutcome = await searchFaceInDatabase(detection.descriptor, branchId);
+        if (serverOutcome.status === "match") {
+          void runIdentification(serverOutcome.match);
           return;
         }
-
-        if (registered.length > 0) {
+        if (serverOutcome.status === "ambiguous") {
+          stableHitsRef.current = 0;
+          setStatusMsg("Rostro ambiguo — mire de frente e intente de nuevo");
+          return;
+        }
+        if (serverOutcome.status === "weak") {
+          stableHitsRef.current = 0;
+          setStatusMsg("Coincidencia débil — acerque la cara e intente de nuevo");
+          return;
+        }
+        // Solo fallback local si el API falló (red/5xx). Si el servidor ya rechazó, no adivinar.
+        if (serverOutcome.status === "error" && registered.length > 0) {
           const match = findBestMatch(
             detection.descriptor,
             registered
@@ -255,7 +291,13 @@ export default function KioskPage() {
             faceMatchThreshold
           );
 
-          if (match && isMatch(match.distance, faceMatchThreshold)) {
+          if (match?.ambiguous) {
+            stableHitsRef.current = 0;
+            setStatusMsg("Rostro ambiguo — mire de frente e intente de nuevo");
+            return;
+          }
+
+          if (isConfidentMatch(match, faceMatchThreshold) && match) {
             const matchedEmp = registered.find(e => e.employeeId === match.employeeId);
             if (matchedEmp) void runIdentification(matchedEmp);
             return;

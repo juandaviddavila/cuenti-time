@@ -60,8 +60,26 @@ const config = withPWA({
   aggressiveFrontEndNavCaching: true,
   reloadOnOnline: true,
   disable: process.env.NODE_ENV === "development",
+  extendDefaultRuntimeCaching: true,
+  /**
+   * Los pesos de face-api, el ONNX de ArcFace y el runtime WASM suman ~27 MB.
+   * Precargarlos obligaría a descargarlos enteros al instalar el service worker,
+   * así que se dejan fuera del precache y se cachean al primer uso.
+   */
+  publicExcludes: ["!noprecache/**/*", "!models/**/*", "!ort/**/*"],
   workboxOptions: {
     disableDevLogs: true,
+    runtimeCaching: [
+      {
+        urlPattern: /\/(models|ort)\/.+\.(onnx|wasm|mjs|bin|json)$/i,
+        handler: "CacheFirst",
+        options: {
+          cacheName: "face-engine",
+          expiration: { maxEntries: 32, maxAgeSeconds: 60 * 60 * 24 * 90 },
+          cacheableResponse: { statuses: [0, 200] },
+        },
+      },
+    ],
   },
 })(nextConfig);
 

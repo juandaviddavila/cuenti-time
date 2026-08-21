@@ -71,10 +71,23 @@ export async function POST(request: NextRequest) {
           },
         });
 
-    if (!user || user.status === "INACTIVE") {
-      return NextResponse.json({
-        message: "Si hay un inicio de sesión pendiente, enviaremos un nuevo código.",
-      });
+    if (!user) {
+      return NextResponse.json(
+        {
+          error: phoneE164
+            ? "El celular no está registrado"
+            : "El correo no está registrado",
+          code: phoneE164 ? "PHONE_NOT_FOUND" : "EMAIL_NOT_FOUND",
+        },
+        { status: 404 }
+      );
+    }
+
+    if (user.status === "INACTIVE") {
+      return NextResponse.json(
+        { error: "Esta cuenta está inactiva", code: "ACCOUNT_INACTIVE" },
+        { status: 403 }
+      );
     }
 
     if (
@@ -82,9 +95,14 @@ export async function POST(request: NextRequest) {
       !user.emailVerifiedAt &&
       user.role !== "FACE_REGISTRAR"
     ) {
-      return NextResponse.json({
-        message: "Si hay un inicio de sesión pendiente, enviaremos un nuevo código.",
-      });
+      return NextResponse.json(
+        {
+          error: "Debes verificar tu correo antes de iniciar sesión",
+          code: "EMAIL_NOT_VERIFIED",
+          email: user.email,
+        },
+        { status: 403 }
+      );
     }
 
     const payload = await issueLoginOtp({ user, channel });

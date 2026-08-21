@@ -49,6 +49,9 @@ pnpm db:push       # = prisma db push
 pnpm db:seed       # = prisma db seed
 pnpm db:studio     # = prisma studio (UI gráfica)
 
+# Motor facial (modelo ONNX + runtime WASM en public/)
+pnpm face:setup # descarga w600k_mbf.onnx y copia los binarios de onnxruntime-web
+
 # Reset destructivo (solo cuando se autorice borrar todos los datos)
 pnpm db:generate && pnpm exec prisma db push --force-reset && pnpm db:seed
 
@@ -145,12 +148,12 @@ AuditLog (registra todos los cambios)
 - Soft-delete: campo `status` (ACTIVE/INACTIVE) o `active: Boolean`
 - Schema en: `prisma/schema.prisma`
 - Seed en: `prisma/seed.ts`
-- Embeddings faciales: `Employee.faceEmbedding Unsupported("vector(128)")` con índice `ivfflat`; crear extensión/índice con `prisma/pgvector.sql`
+- Embeddings faciales: `Employee.faceEmbedding Unsupported("vector(512)")` con índice `ivfflat` y `vector_cosine_ops`; crear extensión/índice con `prisma/pgvector.sql`. Prisma **no** diffea columnas `Unsupported`: cambios de tipo van en SQL explícito
 - `Plan` y `PlanType` fueron eliminados. El modelo SaaS actual usa `Company.plan` (`free`/`paid`), `Company.subscriptionStatus`, `Company.subscriptionExpiresAt`, `Company.maxEmployees` y los modelos de facturación `BillingConfig` + `BillingInvoice` (integración **Cuenti Pay**). Wompi quedó deprecado.
 - `Company.maxEmployees` limita únicamente nuevos registros faciales, no la creación de empleados básicos.
 - `BillingConfig`: precios y credenciales Cuenti Pay leídos desde DB (`freeEmployeeLimit`, `priceCopPerEmployeeMonthly`, `priceUsdPerEmployeeMonthly`, `tipoDocumento`, `idProductoCop`, etc.). Nunca quemar precios/límites en UI.
 - `BillingInvoice`: factura por empresa (`codigoUnico`, `status`, `kind`, `currency`, `totalAmount`, `paymentUrl`, `cuentiTransactionId`).
-- `Company.faceMatchThreshold` (Float, default `0.6`): distancia euclidiana máxima para match facial (menor = más estricto). Editable en `/settings`; usado en `face/search`, `face/descriptors`, kiosk y registro facial.
+- `Company.faceMatchThreshold` (Float, default `0.5`): distancia **coseno** máxima para match facial (menor = más estricto), rango 0.2–1.0. Editable en `/settings`; usado en `face/search`, `face/descriptors`, kiosk y registro facial. Calibrar con `/settings/face-diagnostics`.
 - `Branch.latitude`, `Branch.longitude`, `Branch.googlePlaceId`, `Branch.radiusMeters` controlan geofence para marcaciones faciales.
 
 ### BigInt y límites de la aplicación
@@ -159,23 +162,71 @@ AuditLog (registra todos los cambios)
 - `AuditLog.entityId` continúa siendo string porque es una referencia polimórfica y debe soportar entidades distintas.
 - Tras cambiar el schema, ejecutar `pnpm db:generate`; si se reinicia la base, usar el comando destructivo anterior y volver a sembrar.
 
-## Capa de IA Facial (Mock → Producción)
+## Capa de IA Facial (ArcFace 512-D en el navegador)
 
 ```
 src/lib/ai/
-├── types.ts                 # FaceValidationResult, LivenessResult, FaceEmbedding
-├── face-service.ts          # Interfaz IFaceService (abstracción)
-└── mock-face-service.ts     # Implementación mock (delays aleatorios, scores simulados)
+├── face-api-service.ts      # Detección + landmarks (face-api) y API pública detectFace()
+├── face-align.ts            # 68 landmarks → 5 puntos → similitud → canvas 112x112
+├── arcface-service.ts       # onnxruntime-web: w600k_mbf.onnx → embedding 512-D
+├── pgvector.ts              # Serialización del vector (FACE_EMBEDDING_DIMENSIONS = 512)
+├── openrouter-liveness.ts   # Anti-spoofing (servidor)
+└── openrouter-service.ts    # Cliente de liveness
 ```
 
-**Métodos del servicio:**
-- `validateFace(imageData)` → FaceValidationResult
-- `detectLiveness(imageData)` → LivenessResult
-- `compareFace(embedding1, embedding2)` → confidenceScore
-- `registerFaceEmbedding(imageData)` → FaceEmbedding
-- `getValidationScore(imageData)` → number
+**Pipeline:** `tinyFaceDetector` → `faceLandmark68Net` → 5 puntos canónicos → transformación
+de similitud a 112×112 → ArcFace MobileFaceNet (ONNX) → vector L2-normalizado de 512 →
+pgvector con distancia coseno (`<=>`).
 
-Para conectar proveedor real (Azure Face API recomendado): crear `azure-face-service.ts` implementando `IFaceService` y cambiar el import en el provider.
+- **Solo identidad facial.** ArcFace responde *quién es*; no sirve para comparar prendas
+  ni cuerpo entero. Se entrena para que la misma persona quede cerca *aunque cambie de
+  ropa*; el pipeline además recorta a cara 112×112 y descarta el torso. Reutilizar
+  `faceEmbedding` / `faceMatchThreshold` para alertas de outfit generaría falsos
+  negativos sistemáticos. Fase futura (pipeline aparte): `docs/clothing-checkout-alert.md`.
+- **La alineación no es opcional.** ArcFace se entrenó sobre recortes deformados a la
+  plantilla canónica de InsightFace; sin ese paso la precisión cae de forma notable.
+- `detectFace()` mantiene la firma histórica: si el rostro se detecta pero no se puede
+  alinear, devuelve `descriptor: null` y los callers lo tratan como no identificable.
+- **Escala de distancias:** coseno, no euclidiana. Los umbrales de la etapa face-api
+  (128-D) no son comparables. Centralizados en `src/lib/face-match-threshold.ts`.
+- **Assets:** `public/models/w600k_mbf.onnx` (13 MB) y `public/ort/*.wasm` (13 MB).
+  Regenerarlos con `pnpm face:setup`. Excluidos del precache del service worker y
+  cacheados en runtime (`CacheFirst`, cache `face-engine`).
+- **Importar `onnxruntime-web/wasm`, nunca el paquete raíz.** El entry raíz expone una
+  condición `node` que Next resuelve en la compilación de servidor y Terser falla al
+  minificar ese archivo (`'import' cannot be used outside of module code`).
+- **Sin WebGPU:** ese build registra solo `cpu` y `wasm`. MobileFaceNet resuelve en
+  decenas de ms en CPU, muy por debajo del intervalo de detección del kiosco. Activarlo
+  exigiría importar `onnxruntime-web/webgpu` y servir el binario `*.jsep.wasm` (26 MB
+  frente a 13).
+- **Licencia pendiente (bloqueante para producción):** los pesos de InsightFace
+  (`w600k_mbf`) son *non-commercial research only*. El código del proyecto es MIT, los
+  pesos no. El modelo es intercambiable: un archivo `.onnx` y la constante de dimensión.
+
+  **Decisión (2026-08-21):** negociar la licencia comercial de `buffalo_s` con InsightFace
+  en vez de cambiar de modelo, porque no toca nada de lo implementado. Borrador del correo
+  y plan B en `docs/licencia-modelo-facial.md`.
+
+  Alternativas evaluadas:
+
+  | Opción | Licencia de los pesos | Dim | Tamaño | Navegador |
+  |---|---|---:|---:|---|
+  | `w600k_mbf` (actual) | No comercial | 512 | 13 MB | Sí |
+  | Licencia comercial de InsightFace | Pagada, a negociar | 512 | 13 MB | Sí |
+  | [AuraFace-v1](https://huggingface.co/fal/AuraFace-v1) `glintr100` | Apache 2.0, dataset comercial propio | 512 | 261 MB | No, exige mover el embedding al servidor |
+  | [FaceX](https://github.com/facex-engine/facex) `xs` | Apache 2.0 declarado | 512 | 8.4 MB | Sí |
+  | SFace (OpenCV Zoo) | Apache 2.0 | 128 | ~37 MB | Sí, pero vuelve a 128-D y otra alineación |
+
+  AuraFace es la única con procedencia de datos limpia y declarada, pero es ResNet100:
+  no cabe en el navegador y obligaría a un endpoint de embedding con `onnxruntime-node`.
+  FaceX es un drop-in exacto por tamaño y dimensión, pero está entrenado sobre
+  MS1M-RefineV2, la misma procedencia cuestionada de InsightFace, así que su Apache 2.0
+  cubre el código pero no despeja el riesgo del dataset.
+
+**Migración desde face-api 128-D:** `prisma/migrate-arcface-512.sql` (Prisma no diffea
+columnas `Unsupported`, el `ALTER TYPE` va ahí). Los vectores viejos no son convertibles;
+`/settings/face-migration` los reconstruye desde `Employee.photo` y
+`/settings/face-diagnostics` mide distancias reales para calibrar el umbral.
 
 ## Convenciones de código
 
@@ -240,9 +291,9 @@ src/app/api/
 ├── api-tokens/[id]/route.ts
 ├── face/
 │   ├── descriptors/route.ts
-│   ├── search/route.ts        # Búsqueda por similitud vectorial (pgvector)
-│   ├── register/route.ts
-│   └── validate/route.ts
+│   ├── search/route.ts        # Búsqueda por similitud coseno (pgvector `<=>`)
+│   ├── backfill-candidates/route.ts  # Empleados con foto y sin embedding 512-D
+│   └── liveness/route.ts      # Anti-spoofing vía OpenRouter
 └── v1/                        # API pública con Bearer tokens
     ├── employees/route.ts
     ├── employees/[id]/route.ts
@@ -272,6 +323,7 @@ src/app/api/
 - `jose` — JWT en middleware de Next.js (edge runtime; usar `jose` en middleware, `jsonwebtoken` en API Routes)
 - `@ducanh2912/next-pwa` v10 — usar en vez de `next-pwa` (mejor compatibilidad con Next.js 14)
 - Prisma 5.22 con PostgreSQL; `pgvector` se maneja con `Unsupported("vector(128)")` y SQL crudo para leer/escribir/buscar embeddings
+- `onnxruntime-web` — inferencia de ArcFace (512-D) en el navegador; binarios WASM servidos desde `public/ort/`
 - `xlsx` — exportación a Excel en cliente
 - `jspdf` + `jspdf-autotable` — exportación a PDF en cliente
 - `react-day-picker` v8 — calendario usado por el componente `Calendar` de shadcn/ui
@@ -447,6 +499,8 @@ src/app/api/
 - [ ] Reporte diario por email de tardanzas/ausencias agrupado por turno y sucursal
 - [ ] Novedades colectivas por `shiftId` en UI/reportes
 - [ ] `/pricing` final conectada a pagos y cálculo de empleados extra
+- [ ] Alerta de cambio de prendas entrada vs salida (pipeline aparte de ArcFace; ver `docs/clothing-checkout-alert.md`)
+- [ ] Licencia comercial InsightFace `buffalo_s` (o modelo 512-D permisivo) antes de facturar facial
 
 ## Quirks Next.js
 - `useSearchParams()` debe estar dentro de un componente envuelto en `<Suspense>` (ver `facial-registration/page.tsx`)
@@ -455,4 +509,10 @@ src/app/api/
 - Tras cambiar `schema.prisma`: `pnpm db:generate && pnpm db:push` y **reiniciar** el proceso `next` (el client no hot-reloadea).
 - El reset de BigInt ya fue ejecutado en desarrollo y eliminó los datos anteriores; requiere `db:seed` para restaurar las credenciales de prueba.
 
-*Última actualización: 2026-07-20 (noche). Cuenti Pay: plan gratis (default 3 empleados) + plan pago **mensual** COP/USD por empleado, precios/límites leídos desde `BillingConfig` en DB (nunca quemados); checkout/webhook/void + landing dinámica. BigInt autoincrement + serialización de IDs; build verificado; MCP OAuth 2.1 adicional + Bearer; webhooks 1+3×10min; Integraciones Tokens|MCP|Webhooks; deps exactas; faceMatchThreshold; header sin buscador. Dev: `http://localhost:7578`, MCP `:4101`.*
+*Última actualización: 2026-08-21. ArcFace solo para identidad facial; no reutilizar
+embeddings/umbrales faciales para comparar prendas (diseño fase futura en
+`docs/clothing-checkout-alert.md`). Motor facial: ArcFace MobileFaceNet 512-D +
+onnxruntime-web; pgvector `vector(512)` coseno; `/settings/face-migration` y
+`/settings/face-diagnostics`. Pendiente: licencia InsightFace comercial.*
+
+*Anterior: 2026-07-20 (noche). Cuenti Pay: plan gratis (default 3 empleados) + plan pago **mensual** COP/USD por empleado, precios/límites leídos desde `BillingConfig` en DB (nunca quemados); checkout/webhook/void + landing dinámica. BigInt autoincrement + serialización de IDs; build verificado; MCP OAuth 2.1 adicional + Bearer; webhooks 1+3×10min; Integraciones Tokens|MCP|Webhooks; deps exactas; faceMatchThreshold; header sin buscador. Dev: `http://localhost:7578`, MCP `:4101`.*
