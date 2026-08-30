@@ -120,35 +120,48 @@ async function detectWithFaceApi(
     snapshotForDetector(input),
     detectorOptions
   );
-  const result = withLandmarks ? await detector.withFaceLandmarks() : await detector;
 
-  if (!result) {
-    return { detected: false, box: null, fivePoints: null };
+  if (withLandmarks) {
+    const result = await detector.withFaceLandmarks();
+    if (!result) {
+      return { detected: false, box: null, fivePoints: null };
+    }
+    const box = result.detection.box;
+    if (
+      result.detection.score < minScore ||
+      box.width < minBoxPx ||
+      box.height < minBoxPx
+    ) {
+      return { detected: false, box: null, fivePoints: null };
+    }
+    const fivePoints = toFivePoints(result.landmarks.positions);
+    if (!fivePoints) {
+      return { detected: false, box: null, fivePoints: null };
+    }
+    return {
+      detected: true,
+      box: { x: box.x, y: box.y, width: box.width, height: box.height },
+      fivePoints,
+    };
   }
 
+  // Presencia: sin landmarks, solo caja.
+  const detection = await detector;
+  if (!detection) {
+    return { detected: false, box: null, fivePoints: null };
+  }
+  const box = detection.box;
   if (
-    result.detection.score < minScore ||
-    result.detection.box.width < minBoxPx ||
-    result.detection.box.height < minBoxPx
+    detection.score < minScore ||
+    box.width < minBoxPx ||
+    box.height < minBoxPx
   ) {
-    return { detected: false, box: null, fivePoints: null };
-  }
-
-  const fivePoints = withLandmarks
-    ? toFivePoints(result.landmarks.positions)
-    : null;
-  if (withLandmarks && !fivePoints) {
     return { detected: false, box: null, fivePoints: null };
   }
   return {
     detected: true,
-    box: {
-      x: result.detection.box.x,
-      y: result.detection.box.y,
-      width: result.detection.box.width,
-      height: result.detection.box.height,
-    },
-    fivePoints,
+    box: { x: box.x, y: box.y, width: box.width, height: box.height },
+    fivePoints: null,
   };
 }
 
