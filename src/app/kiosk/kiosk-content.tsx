@@ -12,13 +12,18 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn, formatTime, getInitials } from "@/lib/utils";
 import {
   loadModels,
-  detectFace,
+  detectFaceConsensus,
   findBestMatch,
   isConfidentMatch,
   isModelsLoaded,
+  keepFacesWithDescriptor,
 } from "@/lib/ai/face-api-service";
+import {
+  FACE_SOFT_RETRY_COOLDOWN_MS,
+  FACE_STABLE_HITS,
+  startFacePresenceLoop,
+} from "@/lib/ai/face-detection-loop";
 import { DEFAULT_FACE_MATCH_THRESHOLD } from "@/lib/face-match-threshold";
-import { checkLiveness } from "@/lib/ai/openrouter-service";
 import {
   decideAttendanceMarkType,
   fetchLastAttendanceRecord,
@@ -55,8 +60,9 @@ interface KioskResult { type: AttType; employee: { id: string; fullName: string;
 type FaceSearchOutcome =
   | { status: "match"; match: FaceSearchMatch }
   | { status: "ambiguous" }
-  | { status: "weak" }
-  | { status: "none" }
+  | { status: "weak"; distance?: number }
+  | { status: "empty" }
+  | { status: "none"; distance?: number }
   | { status: "error" };
 
 async function searchFaceInDatabase(
@@ -73,75 +79,35 @@ async function searchFaceInDatabase(
     const data = (await response.json()) as {
       match?: FaceSearchMatch | null;
       reason?: string;
+      distance?: number;
     };
+    if (data.reason === "empty_gallery") return { status: "empty" };
     if (data.reason === "ambiguous") return { status: "ambiguous" };
-    if (data.reason === "weak_match") return { status: "weak" };
+    if (data.reason === "weak_match") {
+      return { status: "weak", distance: data.distance };
+    }
     if (data.match) return { status: "match", match: data.match };
-    return { status: "none" };
+    return { status: "none", distance: data.distance };
   } catch {
     return { status: "error" };
   }
 }
 
-async function descriptorFromPhoto(photo: string): Promise<number[] | null> {
-  await loadModels();
-  const img = new Image();
-  img.crossOrigin = "anonymous";
-  img.src = photo;
-  await new Promise<void>((resolve) => {
-    img.onload = () => resolve();
-    img.onerror = () => resolve();
-  });
-  if (!img.complete || img.naturalWidth === 0) return null;
-  const result = await detectFace(img);
-  return result.descriptor;
-}
-
-async function prepareRegisteredEmployees(data: RegisteredEmp[]): Promise<RegisteredEmp[]> {
-  const prepared: RegisteredEmp[] = [];
-  for (const item of data) {
-    if (Array.isArray(item.descriptor)) {
-      prepared.push(item);
-      continue;
-    }
-    if (!item.photo) continue;
-    try {
-      const descriptor = await descriptorFromPhoto(item.photo);
-      if (descriptor) {
-        prepared.push({ ...item, descriptor });
-        void fetch(`/api/employees/${item.employeeId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            faceRegistered: true,
-            faceRegisteredAt: new Date().toISOString(),
-            faceEmbedding: descriptor,
-          }),
-        }).catch(() => undefined);
-      }
-    } catch (err) {
-      console.warn(`No se pudo extraer embedding de ${item.fullName}`, err);
-    }
-  }
-  return prepared;
-}
-
-const DETECTION_INTERVAL = 1000; // ms between face detection attempts
 const RESET_DELAY = 10_000;
-/** Frames consecutivos con rostro antes de identificar. */
-const STABLE_HITS_REQUIRED = 3;
-const SOFT_RETRY_COOLDOWN_MS = 900;
 
 export default function KioskPage() {
   const router = useRouter();
   const videoRef    = useRef<HTMLVideoElement>(null);
-  const canvasRef   = useRef<HTMLCanvasElement>(null);
   const streamRef   = useRef<MediaStream | null>(null);
-  const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopLoopRef = useRef<(() => void) | null>(null);
   const resetTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const processingRef = useRef(false);
   const stableHitsRef = useRef(0);
   const softRetryUntilRef = useRef(0);
+  const branchIdRef = useRef("");
+  const registeredRef = useRef<RegisteredEmp[]>([]);
+  const thresholdRef = useRef(DEFAULT_FACE_MATCH_THRESHOLD);
+  const phaseRef = useRef<KioskPhase>("loading_models");
 
   const [branches, setBranches]         = useState<BranchOption[]>([]);
   const [branchId, setBranchId]         = useState("");
@@ -155,6 +121,11 @@ export default function KioskPage() {
   const [countdown, setCountdown]       = useState(10);
   const [cameraReady, setCameraReady]   = useState(false);
   const [statusMsg, setStatusMsg]       = useState("");
+
+  branchIdRef.current = branchId;
+  registeredRef.current = registered;
+  thresholdRef.current = faceMatchThreshold;
+  phaseRef.current = phase;
 
   // ── Load branches ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -177,7 +148,7 @@ export default function KioskPage() {
         if (typeof d.faceMatchThreshold === "number") {
           setFaceMatchThreshold(d.faceMatchThreshold);
         }
-        const list = await prepareRegisteredEmployees(d.data ?? []);
+        const list = keepFacesWithDescriptor(d.data ?? []);
         setRegistered(list);
       })
       .catch(() => {});
@@ -240,55 +211,87 @@ export default function KioskPage() {
   }
 
   function startDetectionLoop() {
-    if (timerRef.current) return;
-    timerRef.current = setInterval(async () => {
-      const video = videoRef.current;
-      if (!video || video.readyState < 2 || phase !== "idle") return;
-      if (processingRef.current) return;
-      if (Date.now() < softRetryUntilRef.current) return;
+    if (stopLoopRef.current) return;
+    stopLoopRef.current = startFacePresenceLoop({
+      getVideo: () => videoRef.current,
+      shouldRun: () =>
+        phaseRef.current === "idle" &&
+        !processingRef.current &&
+        Date.now() >= softRetryUntilRef.current,
+      onTick: async (presence) => {
+        setFaceVisible(presence.detected);
 
-      try {
-        const detection = await detectFace(video);
-        setFaceVisible(detection.detected);
-
-        if (!detection.detected || !detection.descriptor || !branchId) {
+        if (!presence.detected) {
           stableHitsRef.current = 0;
-          if (phase === "idle") {
-            setStatusMsg("Buscando rostro... Acomode la cámara y mire de frente");
-          }
+          setStatusMsg("Sin rostro a la vista. Mire de frente");
+          return;
+        }
+
+        const currentBranchId = branchIdRef.current;
+        if (!currentBranchId) {
+          stableHitsRef.current = 0;
+          setStatusMsg("Seleccione una sucursal");
           return;
         }
 
         stableHitsRef.current += 1;
         const hits = stableHitsRef.current;
-        if (hits < STABLE_HITS_REQUIRED) {
-          setStatusMsg(`Rostro detectado — mantenga la posición (${hits}/${STABLE_HITS_REQUIRED})`);
+        if (hits < FACE_STABLE_HITS) {
+          setStatusMsg(`Rostro detectado — mantenga la posición (${hits}/${FACE_STABLE_HITS})`);
           return;
         }
 
-        const serverOutcome = await searchFaceInDatabase(detection.descriptor, branchId);
+        const video = videoRef.current;
+        if (!video) return;
+
+        setStatusMsg("Confirmando rostro...");
+        const detection = await detectFaceConsensus(video);
+        const descriptor = detection.descriptor;
+        if (!descriptor) {
+          stableHitsRef.current = 0;
+          softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
+          setStatusMsg("Acerque la cara y mire de frente");
+          return;
+        }
+
+        setStatusMsg("Buscando identidad...");
+        const serverOutcome = await searchFaceInDatabase(descriptor, currentBranchId);
         if (serverOutcome.status === "match") {
           void runIdentification(serverOutcome.match);
           return;
         }
+        if (serverOutcome.status === "empty") {
+          stableHitsRef.current = 0;
+          softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
+          setStatusMsg("No hay rostros enrolados en esta sucursal");
+          return;
+        }
         if (serverOutcome.status === "ambiguous") {
           stableHitsRef.current = 0;
+          softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
           setStatusMsg("Rostro ambiguo — mire de frente e intente de nuevo");
           return;
         }
         if (serverOutcome.status === "weak") {
           stableHitsRef.current = 0;
-          setStatusMsg("Coincidencia débil — acerque la cara e intente de nuevo");
+          softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
+          const dist =
+            serverOutcome.distance != null
+              ? ` (${serverOutcome.distance.toFixed(2)})`
+              : "";
+          setStatusMsg(`Coincidencia débil${dist} — acerque la cara e intente de nuevo`);
           return;
         }
-        // Solo fallback local si el API falló (red/5xx). Si el servidor ya rechazó, no adivinar.
-        if (serverOutcome.status === "error" && registered.length > 0) {
+
+        const localRegistered = registeredRef.current;
+        if (serverOutcome.status === "error" && localRegistered.length > 0) {
           const match = findBestMatch(
-            detection.descriptor,
-            registered
-              .filter(e => e.descriptor !== null)
-              .map(e => ({ employeeId: e.employeeId, descriptor: e.descriptor as number[] })),
-            faceMatchThreshold
+            descriptor,
+            localRegistered.map((e) => ({
+              employeeId: e.employeeId,
+              descriptor: e.descriptor as number[],
+            })),
+            thresholdRef.current
           );
 
           if (match?.ambiguous) {
@@ -297,24 +300,27 @@ export default function KioskPage() {
             return;
           }
 
-          if (isConfidentMatch(match, faceMatchThreshold) && match) {
-            const matchedEmp = registered.find(e => e.employeeId === match.employeeId);
+          if (isConfidentMatch(match, thresholdRef.current) && match) {
+            const matchedEmp = localRegistered.find((e) => e.employeeId === match.employeeId);
             if (matchedEmp) void runIdentification(matchedEmp);
             return;
           }
         }
 
         stableHitsRef.current = 0;
-        setStatusMsg("Sin coincidencia — reintentando...");
-      } catch {
-        // Non-fatal detection errors
-        stableHitsRef.current = 0;
-      }
-    }, DETECTION_INTERVAL);
+        softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
+        const dist =
+          serverOutcome.status === "none" && serverOutcome.distance != null
+            ? ` (${serverOutcome.distance.toFixed(2)})`
+            : "";
+        setStatusMsg(`Sin coincidencia${dist} — reintentando...`);
+      },
+    });
   }
 
   function stopDetectionLoop() {
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    stopLoopRef.current?.();
+    stopLoopRef.current = null;
     setFaceVisible(false);
   }
 
@@ -324,54 +330,19 @@ export default function KioskPage() {
     if (resetTimer.current) clearTimeout(resetTimer.current);
   }
 
-  function captureFrame(): string | null {
-    const video  = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return null;
-    canvas.width  = video.videoWidth  || 1280;
-    canvas.height = video.videoHeight || 720;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.drawImage(video, 0, 0);
-    return canvas.toDataURL("image/jpeg", 0.85);
-  }
-
-  const resumeSoftRetry = useCallback((message: string) => {
-    processingRef.current = false;
-    stableHitsRef.current = 0;
-    softRetryUntilRef.current = Date.now() + SOFT_RETRY_COOLDOWN_MS;
-    setErrorMsg("");
-    setStatusMsg(message);
-    setPhase("idle");
-  }, []);
-
   const runIdentification = useCallback(async (matchedEmp: RegisteredEmp | FaceSearchMatch) => {
     if (phase !== "idle" || processingRef.current) return;
     processingRef.current = true;
     const employeeId = matchedEmp.employeeId;
     setPhase("processing");
     stopDetectionLoop();
-    setStatusMsg("Verificando prueba de vida...");
-
-    const photo = captureFrame();
-
-    // Liveness check via OpenRouter
-    const liveness = await checkLiveness(photo ?? "");
-
-    if (!liveness.faceDetected) {
-      resumeSoftRetry("No se ve bien el rostro. Acomode la cámara — reintentando...");
-      return;
-    }
-    if (!liveness.isRealPerson || !liveness.antiSpoofingPassed) {
-      resumeSoftRetry(`Ajuste iluminación/ángulo (${liveness.reason}) — reintentando...`);
-      return;
-    }
-
     setStatusMsg("Verificando última marcación...");
 
     try {
       const branch = branches.find((b) => b.id === branchId);
       const windowMinutes = branch?.duplicateWindowMinutes ?? 10;
+      // GPS en paralelo con la última marcación: no sumar su latencia al flujo.
+      const locationPromise = getBrowserLocationIfMobile();
       const lastRecord = await fetchLastAttendanceRecord(employeeId);
       const decision = decideAttendanceMarkType(lastRecord, windowMinutes);
 
@@ -381,11 +352,9 @@ export default function KioskPage() {
 
       const recordType = decision.type;
 
-      setStatusMsg(getClientDeviceClass() === "mobile" ? "Obteniendo ubicación..." : "Registrando asistencia...");
-      const location = await getBrowserLocationIfMobile();
-      const deviceClass = getClientDeviceClass();
-
       setStatusMsg("Registrando asistencia...");
+      const location = await locationPromise;
+      const deviceClass = getClientDeviceClass();
 
       const res = await fetch("/api/attendance", {
         method: "POST",
@@ -395,7 +364,6 @@ export default function KioskPage() {
           branchId,
           type: recordType,
           confidenceScore: "distance" in matchedEmp ? Math.max(0, 1 - matchedEmp.distance) : 1,
-          livenessScore: liveness.confidence,
           validationStatus: "SUCCESS",
           deviceClass,
           ...(location ? { latitude: location.latitude, longitude: location.longitude } : {}),
@@ -429,7 +397,7 @@ export default function KioskPage() {
     } finally {
       processingRef.current = false;
     }
-  }, [phase, branchId, branches, resumeSoftRetry]);
+  }, [phase, branchId, branches]);
 
   function reset() {
     stopEverything();
@@ -488,7 +456,6 @@ export default function KioskPage() {
           playsInline
           className={cn("w-full h-full object-cover", (phase === "success" || phase === "error") && "opacity-20 scale-105")}
         />
-        <canvas ref={canvasRef} className="hidden" />
 
         {/* Camera error */}
         {cameraError && (
@@ -531,19 +498,21 @@ export default function KioskPage() {
               )}>
                 <div className={cn("w-2 h-2 rounded-full animate-pulse", faceVisible ? "bg-green-400" : "bg-slate-500")} />
                 {!branchId ? "Seleccione una sucursal" :
-                 registered.length === 0 ? "Sin empleados registrados" :
-                 !faceVisible ? "Acérquese a la cámara..." :
-                 "Identificando..."}
+                 !faceVisible ? (statusMsg || "Sin rostro a la vista. Mire de frente") :
+                 (statusMsg || "Rostro detectado")}
               </div>
             </div>
 
             {/* Bottom info */}
-            {faceVisible && registered.length > 0 && branchId && (
+            {branchId && (
               <div className="absolute bottom-0 left-0 right-0 p-5 bg-gradient-to-t from-slate-950/90 to-transparent">
                 <div className="max-w-sm mx-auto text-center">
+                  {statusMsg && (
+                    <p className="text-white text-sm font-medium mb-2">{statusMsg}</p>
+                  )}
                   <div className="flex items-center justify-center gap-2 text-white/70 text-xs">
                     <Wifi className="w-3 h-3 text-green-400" />
-                    <span>Reconocimiento facial activo — se identificará automáticamente</span>
+                    <span>Detección MediaPipe — identidad solo con cara estable</span>
                   </div>
                 </div>
               </div>

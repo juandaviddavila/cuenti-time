@@ -9,8 +9,17 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
-import { detectFace, isModelsLoaded, loadModels } from "@/lib/ai/face-api-service";
-import { checkLiveness } from "@/lib/ai/openrouter-service";
+import {
+  captureEnrollmentEmbedding,
+  isModelsLoaded,
+  loadModels,
+  type FacePresence,
+} from "@/lib/ai/face-api-service";
+import {
+  FACE_SOFT_RETRY_COOLDOWN_MS,
+  FACE_STABLE_HITS,
+  startFacePresenceLoop,
+} from "@/lib/ai/face-detection-loop";
 import { cn, getInitials, sleep } from "@/lib/utils";
 
 export interface FaceRegistrationEmployee {
@@ -29,8 +38,6 @@ interface Props {
 
 type Phase = "loading_models" | "idle" | "processing" | "success" | "error";
 
-const STABLE_HITS_REQUIRED = 3;
-const SOFT_RETRY_COOLDOWN_MS = 900;
 
 export function EmployeeFaceRegistrationDialog({
   open,
@@ -41,11 +48,13 @@ export function EmployeeFaceRegistrationDialog({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopLoopRef = useRef<(() => void) | null>(null);
   const processingRef = useRef(false);
   const stableHitsRef = useRef(0);
   const softRetryUntilRef = useRef(0);
   const employeeRef = useRef(employee);
+  const phaseRef = useRef<Phase>("loading_models");
+  const lastPresenceRef = useRef<FacePresence | null>(null);
 
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState("");
@@ -55,16 +64,14 @@ export function EmployeeFaceRegistrationDialog({
   const [progressLabel, setProgressLabel] = useState("");
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
-  const [livenessMsg, setLivenessMsg] = useState("");
   const [scanMessage, setScanMessage] = useState("Inicializando reconocimiento...");
 
   employeeRef.current = employee;
+  phaseRef.current = phase;
 
   function stopDetectionLoop() {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+    stopLoopRef.current?.();
+    stopLoopRef.current = null;
     setFaceDetected(false);
   }
 
@@ -116,11 +123,10 @@ export function EmployeeFaceRegistrationDialog({
   const resumeSoftRetry = useCallback((message: string) => {
     processingRef.current = false;
     stableHitsRef.current = 0;
-    softRetryUntilRef.current = Date.now() + SOFT_RETRY_COOLDOWN_MS;
+    softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
     setProgress(0);
     setProgressLabel("");
     setCapturedPhoto(null);
-    setLivenessMsg("");
     setErrorMsg("");
     setScanMessage(message);
     setPhase("idle");
@@ -138,34 +144,14 @@ export function EmployeeFaceRegistrationDialog({
 
     setProgress(10);
     setProgressLabel("Detectando rostro...");
-    await sleep(300);
+    await sleep(200);
 
-    const tempImg = new Image();
-    if (photo) tempImg.src = photo;
-    await new Promise((r) => {
-      tempImg.onload = r;
-      tempImg.onerror = r;
-    });
-
+    const video = videoRef.current;
     setProgress(25);
-    setProgressLabel("Extrayendo descriptor facial...");
-    const detection = await detectFace(tempImg);
-    if (!detection.detected || !detection.descriptor) {
+    setProgressLabel("Capturando varias muestras del rostro...");
+    const descriptor = video ? await captureEnrollmentEmbedding(video) : null;
+    if (!descriptor) {
       resumeSoftRetry("Acomode el rostro en el óvalo — seguimos intentando...");
-      return;
-    }
-
-    setProgress(50);
-    setProgressLabel("Verificando prueba de vida...");
-    const liveness = await checkLiveness(photo ?? "");
-    setLivenessMsg(liveness.reason);
-
-    if (!liveness.faceDetected) {
-      resumeSoftRetry("No se ve bien el rostro. Acomode la cámara — reintentando...");
-      return;
-    }
-    if (!liveness.isRealPerson || !liveness.antiSpoofingPassed) {
-      resumeSoftRetry(`Ajuste iluminación/ángulo (${liveness.reason}) — reintentando...`);
       return;
     }
 
@@ -179,7 +165,7 @@ export function EmployeeFaceRegistrationDialog({
           faceRegistered: true,
           faceRegisteredAt: new Date().toISOString(),
           biometricConsentAt: new Date().toISOString(),
-          faceEmbedding: detection.descriptor,
+          faceEmbedding: descriptor,
           ...(photo ? { photo } : {}),
         }),
       });
@@ -206,38 +192,40 @@ export function EmployeeFaceRegistrationDialog({
   }, [onSuccess, resumeSoftRetry]);
 
   const startDetectionLoop = useCallback(() => {
-    if (timerRef.current) return;
-    timerRef.current = setInterval(async () => {
-      const video = videoRef.current;
-      if (!video || video.readyState < 2) return;
-      if (processingRef.current) return;
-      if (Date.now() < softRetryUntilRef.current) return;
+    if (stopLoopRef.current) return;
+    stopLoopRef.current = startFacePresenceLoop({
+      getVideo: () => videoRef.current,
+      shouldRun: () =>
+        phaseRef.current === "idle" &&
+        !processingRef.current &&
+        Date.now() >= softRetryUntilRef.current,
+      onTick: (presence) => {
+        lastPresenceRef.current = presence;
+        setFaceDetected(presence.detected);
 
-      try {
-        const result = await detectFace(video);
-        setFaceDetected(result.detected);
-
-        if (!result.detected || !result.descriptor) {
+        if (!presence.detected) {
           stableHitsRef.current = 0;
-          setScanMessage("Buscando rostro... Acomode la cámara y mire de frente");
+          setScanMessage("Sin rostro a la vista. Mire de frente");
+          return;
+        }
+
+        if (!presence.fivePoints) {
+          stableHitsRef.current = 0;
+          setScanMessage("Rostro visible, no se pudo alinear. Mire de frente");
           return;
         }
 
         stableHitsRef.current += 1;
         const hits = stableHitsRef.current;
-        if (hits < STABLE_HITS_REQUIRED) {
-          setScanMessage(`Rostro detectado — mantenga la posición (${hits}/${STABLE_HITS_REQUIRED})`);
+        if (hits < FACE_STABLE_HITS) {
+          setScanMessage(`Rostro detectado — mantenga la posición (${hits}/${FACE_STABLE_HITS})`);
           return;
         }
 
         setScanMessage("Posición estable. Capturando...");
         void triggerCapture();
-      } catch (err) {
-        console.error("Face detection failed:", err);
-        stableHitsRef.current = 0;
-        setScanMessage("Error detectando rostro. Reintentando...");
-      }
-    }, 800);
+      },
+    });
   }, [triggerCapture]);
 
   // Boot / teardown when dialog opens or closes
@@ -250,7 +238,6 @@ export function EmployeeFaceRegistrationDialog({
       setProgressLabel("");
       setCapturedPhoto(null);
       setErrorMsg("");
-      setLivenessMsg("");
       setScanMessage("Inicializando reconocimiento...");
       return;
     }
@@ -299,7 +286,6 @@ export function EmployeeFaceRegistrationDialog({
     setProgressLabel("");
     setCapturedPhoto(null);
     setErrorMsg("");
-    setLivenessMsg("");
     processingRef.current = false;
     stableHitsRef.current = 0;
     softRetryUntilRef.current = 0;
@@ -398,9 +384,6 @@ export function EmployeeFaceRegistrationDialog({
               <div className="text-center">
                 <p className="text-white font-semibold">Procesando biometría...</p>
                 <p className="text-white/60 text-xs mt-1">{progressLabel}</p>
-                {livenessMsg && (
-                  <p className="text-white/40 text-xs mt-2 italic">{livenessMsg}</p>
-                )}
               </div>
               <div className="w-full max-w-xs space-y-1">
                 <div className="flex justify-between text-xs text-white/70">
@@ -453,9 +436,16 @@ export function EmployeeFaceRegistrationDialog({
               </Button>
             </>
           ) : (
-            <Button variant="outline" onClick={handleClose} disabled={phase === "processing"}>
-              Cancelar
-            </Button>
+            <>
+              <Button variant="outline" onClick={handleClose} disabled={phase === "processing"}>
+                Cancelar
+              </Button>
+              {phase === "idle" && cameraActive && !cameraError && (
+                <Button onClick={() => void triggerCapture()} disabled={processingRef.current}>
+                  Capturar ahora
+                </Button>
+              )}
+            </>
           )}
         </div>
       </DialogContent>

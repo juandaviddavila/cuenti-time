@@ -15,13 +15,20 @@ import { PageHeader } from "@/components/shared/page-header";
 import { cn, getInitials, sleep } from "@/lib/utils";
 import {
   loadModels,
-  detectFace,
+  detectFaceConsensus,
+  captureEnrollmentEmbedding,
   findBestMatch,
   isConfidentMatch,
   isModelsLoaded,
+  keepFacesWithDescriptor,
+  type FacePresence,
 } from "@/lib/ai/face-api-service";
+import {
+  FACE_SOFT_RETRY_COOLDOWN_MS,
+  FACE_STABLE_HITS,
+  startFacePresenceLoop,
+} from "@/lib/ai/face-detection-loop";
 import { DEFAULT_FACE_MATCH_THRESHOLD } from "@/lib/face-match-threshold";
-import { checkLiveness } from "@/lib/ai/openrouter-service";
 import {
   decideAttendanceMarkType,
   fetchLastAttendanceRecord,
@@ -67,8 +74,9 @@ interface FaceSearchMatch {
 type FaceSearchOutcome =
   | { status: "match"; match: FaceSearchMatch }
   | { status: "ambiguous" }
-  | { status: "weak" }
-  | { status: "none" }
+  | { status: "weak"; distance?: number }
+  | { status: "empty" }
+  | { status: "none"; distance?: number }
   | { status: "error" };
 
 async function searchFaceInDatabase(descriptor: number[]): Promise<FaceSearchOutcome> {
@@ -82,73 +90,21 @@ async function searchFaceInDatabase(descriptor: number[]): Promise<FaceSearchOut
     const data = (await response.json()) as {
       match?: FaceSearchMatch | null;
       reason?: string;
+      distance?: number;
     };
+    if (data.reason === "empty_gallery") return { status: "empty" };
     if (data.reason === "ambiguous") return { status: "ambiguous" };
-    if (data.reason === "weak_match") return { status: "weak" };
+    if (data.reason === "weak_match") {
+      return { status: "weak", distance: data.distance };
+    }
     if (data.match) return { status: "match", match: data.match };
-    return { status: "none" };
+    return { status: "none", distance: data.distance };
   } catch {
     return { status: "error" };
   }
 }
 
-async function descriptorFromPhoto(photo: string): Promise<number[] | null> {
-  await loadModels();
-  const img = new Image();
-  img.crossOrigin = "anonymous";
-  img.src = photo;
-  await new Promise<void>((resolve) => {
-    img.onload = () => resolve();
-    img.onerror = () => resolve();
-  });
-  if (!img.complete || img.naturalWidth === 0) return null;
-  const result = await detectFace(img);
-  return result.descriptor;
-}
-
-async function prepareRegisteredFaces(data: RegisteredFace[]): Promise<RegisteredFace[]> {
-  const prepared: RegisteredFace[] = [];
-  for (const item of data) {
-    if (Array.isArray(item.descriptor)) {
-      prepared.push(item);
-      continue;
-    }
-    if (!item.photo) continue;
-    try {
-      const descriptor = await descriptorFromPhoto(item.photo);
-      if (descriptor) {
-        prepared.push({ ...item, descriptor });
-        try {
-          const res = await fetch(`/api/employees/${item.employeeId}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              faceRegistered: true,
-              faceRegisteredAt: new Date().toISOString(),
-              faceEmbedding: descriptor,
-            }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({})) as { error?: string };
-            console.error(`Error guardando embedding de ${item.fullName}:`, err.error);
-          }
-        } catch (err) {
-          console.error(`Fetch falló al guardar embedding de ${item.fullName}:`, err);
-        }
-      }
-    } catch (err) {
-      console.warn(`No se pudo extraer embedding de ${item.fullName}`, err);
-    }
-  }
-  return prepared;
-}
-
 type Phase = "loading_models" | "idle" | "processing" | "success" | "error";
-
-/** Frames consecutivos con rostro antes de capturar (~2.4s a 800ms). */
-const STABLE_HITS_REQUIRED = 3;
-/** Espera entre soft-retries mientras la persona se acomoda. */
-const SOFT_RETRY_COOLDOWN_MS = 900;
 
 function FacialRegistrationContent() {
   const searchParams  = useSearchParams();
@@ -158,13 +114,16 @@ function FacialRegistrationContent() {
   const videoRef   = useRef<HTMLVideoElement>(null);
   const canvasRef  = useRef<HTMLCanvasElement>(null);
   const streamRef  = useRef<MediaStream | null>(null);
-  const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopLoopRef = useRef<(() => void) | null>(null);
   const registeredFacesRef = useRef<RegisteredFace[]>([]);
   const faceMatchThresholdRef = useRef(DEFAULT_FACE_MATCH_THRESHOLD);
   const branchesRef = useRef<BranchMini[]>([]);
   const processingRef = useRef(false);
   const stableHitsRef = useRef(0);
   const softRetryUntilRef = useRef(0);
+  const employeeRef = useRef<EmployeeMini | null>(null);
+  const phaseRef = useRef<Phase>("loading_models");
+  const lastPresenceRef = useRef<FacePresence | null>(null);
 
   const [employee, setEmployee]       = useState<EmployeeMini | null>(null);
   const [automaticMode, setAutomaticMode] = useState(!employeeId);
@@ -176,11 +135,13 @@ function FacialRegistrationContent() {
   const [progressLabel, setProgressLabel] = useState("");
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [errorMsg, setErrorMsg]           = useState("");
-  const [livenessMsg, setLivenessMsg]     = useState("");
   const [registeredFaceCount, setRegisteredFaceCount] = useState(0);
   const [scanMessage, setScanMessage] = useState("Inicializando reconocimiento...");
   const [attendanceType, setAttendanceType] = useState<AttendanceMarkType | null>(null);
   const [resetCountdown, setResetCountdown] = useState(0);
+
+  employeeRef.current = employee;
+  phaseRef.current = phase;
 
   // ── Load employee or registered faces for automatic mode ──────────────────
   useEffect(() => {
@@ -200,7 +161,7 @@ function FacialRegistrationContent() {
           if (typeof d.faceMatchThreshold === "number") {
             faceMatchThresholdRef.current = d.faceMatchThreshold;
           }
-          const faces = await prepareRegisteredFaces(d.data ?? []);
+          const faces = keepFacesWithDescriptor(d.data ?? []);
           registeredFacesRef.current = faces;
           setRegisteredFaceCount(faces.length);
           setScanMessage(
@@ -229,7 +190,7 @@ function FacialRegistrationContent() {
       .catch(() => toast.error("Error al cargar empleado"));
   }, [employeeId, router]);
 
-  // ── Load face-api models ──────────────────────────────────────────────────
+  // ── Load MediaPipe + ArcFace ──────────────────────────────────────────────
   useEffect(() => {
     loadModels()
       .then(() => {
@@ -288,7 +249,7 @@ function FacialRegistrationContent() {
         videoRef.current.srcObject = stream;
         videoRef.current.onloadedmetadata = () => {
           setCameraActive(true);
-          setScanMessage(automaticMode ? "Buscando rostro..." : "Coloque el rostro en el óvalo");
+          setScanMessage(automaticMode ? "Sin rostro a la vista. Mire de frente" : "Coloque el rostro en el óvalo");
         };
       }
     } catch {
@@ -303,59 +264,76 @@ function FacialRegistrationContent() {
   }
 
   function startDetectionLoop() {
-    if (timerRef.current) return;
-    timerRef.current = setInterval(async () => {
-      const video = videoRef.current;
-      if (!video || video.readyState < 2) return;
-      if (processingRef.current) return;
-      if (Date.now() < softRetryUntilRef.current) return;
+    if (stopLoopRef.current) return;
+    stopLoopRef.current = startFacePresenceLoop({
+      getVideo: () => videoRef.current,
+      shouldRun: () =>
+        phaseRef.current === "idle" &&
+        !processingRef.current &&
+        Date.now() >= softRetryUntilRef.current,
+      onTick: async (presence) => {
+        lastPresenceRef.current = presence;
+        setFaceDetected(presence.detected);
 
-      try {
-        const result = await detectFace(video);
-        setFaceDetected(result.detected);
-
-        if (!result.detected || !result.descriptor) {
+        if (!presence.detected) {
           stableHitsRef.current = 0;
-          setScanMessage("Buscando rostro... Acomode la cámara y mire de frente");
+          setScanMessage("Sin rostro a la vista. Mire de frente");
           return;
         }
-
-        if (phase !== "idle") return;
 
         stableHitsRef.current += 1;
         const hits = stableHitsRef.current;
-
-        if (hits < STABLE_HITS_REQUIRED) {
-          setScanMessage(`Rostro detectado — mantenga la posición (${hits}/${STABLE_HITS_REQUIRED})`);
+        if (hits < FACE_STABLE_HITS) {
+          setScanMessage(`Rostro detectado — mantenga la posición (${hits}/${FACE_STABLE_HITS})`);
           return;
         }
 
-        if (employee) {
+        const currentEmployee = employeeRef.current;
+        if (currentEmployee) {
           setScanMessage("Posición estable. Capturando...");
-          void triggerCapture(employee);
+          void triggerCapture(currentEmployee);
           return;
         }
 
-        if (registeredFacesRef.current.length === 0) {
+        const video = videoRef.current;
+        if (!video) return;
+
+        setScanMessage("Confirmando rostro...");
+        const detection = await detectFaceConsensus(video);
+        const descriptor = detection.descriptor;
+        if (!descriptor) {
           stableHitsRef.current = 0;
-          setScanMessage("Rostro detectado, pero no hay rostros registrados para comparar");
+          softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
+          setScanMessage("Acerque la cara y mire de frente");
           return;
         }
 
-        setScanMessage("Rostro estable. Buscando en pgvector...");
-
-        const serverOutcome = await searchFaceInDatabase(result.descriptor);
+        setScanMessage("Buscando identidad...");
+        const serverOutcome = await searchFaceInDatabase(descriptor);
         let matched: RegisteredFace | FaceSearchMatch | null = null;
 
         if (serverOutcome.status === "ambiguous") {
           stableHitsRef.current = 0;
+          softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
           setScanMessage("Rostro ambiguo — mire de frente e intente de nuevo");
+          return;
+        }
+
+        if (serverOutcome.status === "empty") {
+          stableHitsRef.current = 0;
+          softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
+          setScanMessage("No hay rostros enrolados para comparar");
           return;
         }
 
         if (serverOutcome.status === "weak") {
           stableHitsRef.current = 0;
-          setScanMessage("Coincidencia débil — acerque la cara e intente de nuevo");
+          softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
+          const dist =
+            serverOutcome.distance != null
+              ? ` (${serverOutcome.distance.toFixed(2)})`
+              : "";
+          setScanMessage(`Coincidencia débil${dist} — acerque la cara e intente de nuevo`);
           return;
         }
 
@@ -364,10 +342,11 @@ function FacialRegistrationContent() {
         } else if (serverOutcome.status === "error") {
           const threshold = faceMatchThresholdRef.current;
           const match = findBestMatch(
-            result.descriptor,
-            registeredFacesRef.current
-              .filter(e => Array.isArray(e.descriptor))
-              .map(e => ({ employeeId: e.employeeId, descriptor: e.descriptor as number[] })),
+            descriptor,
+            registeredFacesRef.current.map((e) => ({
+              employeeId: e.employeeId,
+              descriptor: e.descriptor as number[],
+            })),
             threshold
           );
 
@@ -383,10 +362,15 @@ function FacialRegistrationContent() {
             return;
           }
 
-          matched = registeredFacesRef.current.find(e => e.employeeId === match.employeeId) ?? null;
+          matched = registeredFacesRef.current.find((e) => e.employeeId === match.employeeId) ?? null;
         } else {
           stableHitsRef.current = 0;
-          setScanMessage("Sin coincidencia");
+          softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
+          const dist =
+            serverOutcome.status === "none" && serverOutcome.distance != null
+              ? ` (${serverOutcome.distance.toFixed(2)})`
+              : "";
+          setScanMessage(`Sin coincidencia${dist}`);
           return;
         }
 
@@ -406,16 +390,13 @@ function FacialRegistrationContent() {
         };
         setEmployee(target);
         void triggerCapture(target);
-      } catch (err) {
-        console.error("Face detection failed:", err);
-        stableHitsRef.current = 0;
-        setScanMessage("Error detectando rostro. Reintentando...");
-      }
-    }, 800);
+      },
+    });
   }
 
   function stopDetectionLoop() {
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    stopLoopRef.current?.();
+    stopLoopRef.current = null;
     setFaceDetected(false);
   }
 
@@ -431,7 +412,7 @@ function FacialRegistrationContent() {
     return canvas.toDataURL("image/jpeg", 0.85);
   }
 
-  async function createAttendanceRecord(activeEmployee: EmployeeMini, livenessScore: number) {
+  async function createAttendanceRecord(activeEmployee: EmployeeMini) {
     if (!activeEmployee.branchId) {
       throw new Error("El empleado no tiene sucursal asociada para registrar asistencia");
     }
@@ -455,10 +436,9 @@ function FacialRegistrationContent() {
       body: JSON.stringify({
         employeeId: activeEmployee.id,
         branchId: activeEmployee.branchId,
-        type: decision.type,
-        confidenceScore: 0.92,
-        livenessScore,
-        validationStatus: "SUCCESS" as const,
+          type: decision.type,
+          confidenceScore: 0.92,
+          validationStatus: "SUCCESS" as const,
         isManual: false,
         deviceClass,
         ...(location ? { latitude: location.latitude, longitude: location.longitude } : {}),
@@ -477,11 +457,10 @@ function FacialRegistrationContent() {
   const resumeSoftRetry = useCallback((message: string) => {
     processingRef.current = false;
     stableHitsRef.current = 0;
-    softRetryUntilRef.current = Date.now() + SOFT_RETRY_COOLDOWN_MS;
+    softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
     setProgress(0);
     setProgressLabel("");
     setCapturedPhoto(null);
-    setLivenessMsg("");
     setErrorMsg("");
     setScanMessage(message);
     setPhase("idle");
@@ -501,34 +480,25 @@ function FacialRegistrationContent() {
 
     setProgress(10);
     setProgressLabel("Detectando rostro...");
-    await sleep(300);
+    await sleep(200);
 
-    // Step 1: Re-detect face from captured frame
-    const tempImg = new Image();
-    if (photo) tempImg.src = photo;
-    await new Promise(r => { tempImg.onload = r; tempImg.onerror = r; });
-
+    const video = videoRef.current;
+    const isAttendancePath = automaticMode && !employeeId;
     setProgress(25);
-    setProgressLabel("Extrayendo descriptor facial...");
-    const detection = await detectFace(tempImg);
-    if (!detection.detected || !detection.descriptor) {
+    setProgressLabel(
+      isAttendancePath
+        ? "Extrayendo descriptor facial..."
+        : "Capturando varias muestras del rostro..."
+    );
+    // En marcación el descriptor solo confirma que hay cara: una muestra basta.
+    // En enrolamiento se promedian varias para un template más robusto.
+    const descriptor = video
+      ? isAttendancePath
+        ? (await detectFaceConsensus(video)).descriptor
+        : await captureEnrollmentEmbedding(video)
+      : null;
+    if (!descriptor) {
       resumeSoftRetry("Acomode el rostro en el óvalo — seguimos intentando...");
-      return;
-    }
-
-    // Step 2: Liveness check via OpenRouter
-    setProgress(50);
-    setProgressLabel("Verificando prueba de vida...");
-    const liveness = await checkLiveness(photo ?? "");
-    setLivenessMsg(liveness.reason);
-
-    if (!liveness.faceDetected) {
-      resumeSoftRetry("No se ve bien el rostro. Acomode la cámara — reintentando...");
-      return;
-    }
-    if (!liveness.isRealPerson || !liveness.antiSpoofingPassed) {
-      // Mientras se acomodan, liveness suele fallar: soft-retry, no modal rojo.
-      resumeSoftRetry(`Ajuste iluminación/ángulo (${liveness.reason}) — reintentando...`);
       return;
     }
 
@@ -536,7 +506,7 @@ function FacialRegistrationContent() {
       setProgress(75);
       setProgressLabel("Registrando asistencia...");
       try {
-        const markType = await createAttendanceRecord(activeEmployee, liveness.confidence);
+        const markType = await createAttendanceRecord(activeEmployee);
         setAttendanceType(markType);
         setProgress(100);
         setProgressLabel(markType === "CHECK_IN" ? "Entrada registrada" : "Salida registrada");
@@ -566,7 +536,7 @@ function FacialRegistrationContent() {
           faceRegistered: true,
           faceRegisteredAt: new Date().toISOString(),
           biometricConsentAt: new Date().toISOString(),
-          faceEmbedding: detection.descriptor,
+          faceEmbedding: descriptor,
           ...(photo ? { photo } : {}),
         }),
       });
@@ -598,7 +568,6 @@ function FacialRegistrationContent() {
     setProgressLabel("");
     setCapturedPhoto(null);
     setErrorMsg("");
-    setLivenessMsg("");
     setAttendanceType(null);
     setResetCountdown(0);
     setEmployee(employeeId ? employee : null);
@@ -751,7 +720,6 @@ function FacialRegistrationContent() {
             <div className="text-center">
               <p className="text-white font-semibold">Procesando biometría...</p>
               <p className="text-white/60 text-xs mt-1">{progressLabel}</p>
-              {livenessMsg && <p className="text-white/40 text-xs mt-2 italic">{livenessMsg}</p>}
             </div>
             <div className="w-full max-w-xs space-y-1">
               <div className="flex justify-between text-xs text-white/70">

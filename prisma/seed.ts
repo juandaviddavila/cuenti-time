@@ -8,7 +8,7 @@ async function main() {
 
   // ─── Super Admin ────────────────────────────────────────────────────────────
   const superAdminPassword = await bcrypt.hash("Admin2024!", 12);
-  const superAdmin = await prisma.user.upsert({
+  await prisma.user.upsert({
     where: { email: "superadmin@cuenti.com" },
     update: { emailVerifiedAt: new Date(), emailVerificationToken: null, emailVerificationExpiresAt: null },
     create: {
@@ -144,7 +144,7 @@ async function main() {
   // ─── Users ─────────────────────────────────────────────────────────────────
   const adminPassword = await bcrypt.hash("Admin2024!", 12);
 
-  const adminC1 = await prisma.user.upsert({
+  await prisma.user.upsert({
     where: { email: "admin.distribuidora@cuenti.com" },
     update: { emailVerifiedAt: new Date(), emailVerificationToken: null, emailVerificationExpiresAt: null },
     create: {
@@ -217,15 +217,18 @@ async function main() {
   }
 
   // ─── Employees ─────────────────────────────────────────────────────────────
+  // faceRegistered siempre false: el seed no puede generar embeddings reales.
+  // Marcarlos true dejaba la galería vacía (empty_gallery en /api/face/search)
+  // y además consumía el cupo de registro facial del plan gratis.
   const employeeData = [
-    { fullName: "María Alejandra López", documentNumber: "1020304050", position: "Coordinadora de Ventas", branchId: branch1.id, faceRegistered: true },
-    { fullName: "Jorge Esteban Ramírez", documentNumber: "1020304051", position: "Analista Contable", branchId: branch1.id, faceRegistered: true },
+    { fullName: "María Alejandra López", documentNumber: "1020304050", position: "Coordinadora de Ventas", branchId: branch1.id, faceRegistered: false },
+    { fullName: "Jorge Esteban Ramírez", documentNumber: "1020304051", position: "Analista Contable", branchId: branch1.id, faceRegistered: false },
     { fullName: "Valentina Castro Ruiz", documentNumber: "1020304052", position: "Asistente de Gerencia", branchId: branch1.id, faceRegistered: false },
-    { fullName: "Andrés Felipe Morales", documentNumber: "1020304053", position: "Técnico de Soporte", branchId: branch2.id, faceRegistered: true },
-    { fullName: "Diana Sofía Peña", documentNumber: "1020304054", position: "Coordinadora de Operaciones", branchId: branch2.id, faceRegistered: true },
+    { fullName: "Andrés Felipe Morales", documentNumber: "1020304053", position: "Técnico de Soporte", branchId: branch2.id, faceRegistered: false },
+    { fullName: "Diana Sofía Peña", documentNumber: "1020304054", position: "Coordinadora de Operaciones", branchId: branch2.id, faceRegistered: false },
     { fullName: "Carlos Iván Suárez", documentNumber: "1020304055", position: "Mensajero", branchId: branch1.id, faceRegistered: false },
-    { fullName: "Natalia Marcela Díaz", documentNumber: "1020304060", position: "Operaria de Producción", branchId: branch3.id, faceRegistered: true },
-    { fullName: "Jesús Antonio Vargas", documentNumber: "1020304061", position: "Supervisor de Planta", branchId: branch3.id, faceRegistered: true },
+    { fullName: "Natalia Marcela Díaz", documentNumber: "1020304060", position: "Operaria de Producción", branchId: branch3.id, faceRegistered: false },
+    { fullName: "Jesús Antonio Vargas", documentNumber: "1020304061", position: "Supervisor de Planta", branchId: branch3.id, faceRegistered: false },
   ];
 
   const employees = [];
@@ -403,7 +406,7 @@ async function main() {
 
   // ─── Attendance Records (last 7 days) ──────────────────────────────────────
   const registeredEmployees = employees.filter(
-    (e) => e.faceRegistered && [branch1.id, branch2.id, branch3.id].includes(e.branchId)
+    (e) => e.status === Status.ACTIVE && [branch1.id, branch2.id, branch3.id].includes(e.branchId)
   );
 
   for (const employee of registeredEmployees) {

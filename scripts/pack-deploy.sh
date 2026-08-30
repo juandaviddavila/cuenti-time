@@ -172,12 +172,13 @@ if ! tar -tzf "$OUTPUT" | grep -E '(^|/)packages/hr-mcp-server/dist/packages/hr-
   exit 1
 fi
 
-# Motor facial ArcFace: ONNX + runtime WASM + detección face-api + SQL 512-D
+# Motor facial: MediaPipe (detección) + ArcFace ONNX + ORT WASM + SQL 512-D
 missing_face=()
 for face_path in \
   public/models/w600k_mbf.onnx \
-  public/models/tiny_face_detector_model.bin \
-  public/models/face_landmark_68_model.bin \
+  public/models/face_landmarker.task \
+  public/mediapipe/vision_bundle.mjs \
+  public/mediapipe/wasm/vision_wasm_internal.wasm \
   public/ort/ort.wasm.bundle.min.mjs \
   public/ort/ort-wasm-simd-threaded.wasm \
   prisma/migrate-arcface-512.sql
@@ -195,7 +196,7 @@ if [ "${#missing_face[@]}" -gt 0 ]; then
   rm -f "$OUTPUT"
   exit 1
 fi
-echo "==> Assets faciales en el tar (ONNX + ORT + face-api + migrate-arcface-512.sql) OK"
+echo "==> Assets faciales en el tar (MediaPipe + ONNX + ORT + migrate-arcface-512.sql) OK"
 
 echo ""
 echo "Contenido .env* en el tar (solo examples, OK):"

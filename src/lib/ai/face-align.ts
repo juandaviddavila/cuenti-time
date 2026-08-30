@@ -72,6 +72,33 @@ export function toFivePoints(positions: readonly Point[]): Point[] | null {
 }
 
 /**
+ * MediaPipe Face Landmarker (478 o 468 puntos, coords normalizadas 0–1).
+ * Orden InsightFace: ojo izq. de la imagen, ojo der., nariz, comisura izq., der.
+ * "Izquierda/derecha" es de la imagen (persona de frente: 33/473 = der. del sujeto).
+ */
+export function toFivePointsFromMediaPipe(
+  landmarks: readonly Point[],
+  width: number,
+  height: number
+): Point[] | null {
+  if (landmarks.length < 292 || width <= 0 || height <= 0) return null;
+
+  const pixel = (index: number): Point => ({
+    x: landmarks[index].x * width,
+    y: landmarks[index].y * height,
+  });
+
+  const hasIris = landmarks.length >= 478;
+  return [
+    hasIris ? pixel(473) : pixel(33),
+    hasIris ? pixel(468) : pixel(263),
+    pixel(1),
+    pixel(61),
+    pixel(291),
+  ];
+}
+
+/**
  * Solución de mínimos cuadrados para la transformación de similitud 2D
  * (rotación + escala uniforme + traslación, sin reflexión ni cizalladura).
  *
@@ -142,13 +169,12 @@ export function estimateSimilarityTransform(
  * Canvas 2D aplica exactamente una transformación afín, y una similitud es un caso
  * particular de ella, así que el warp sale gratis sin dependencias externas.
  */
-export function alignFaceToCanvas(
+export function alignFaceToCanvasFromFivePoints(
   input: CanvasImageSource,
-  positions: readonly Point[],
+  fivePoints: readonly Point[],
   size: number = ARCFACE_INPUT_SIZE
 ): HTMLCanvasElement | null {
-  const fivePoints = toFivePoints(positions);
-  if (!fivePoints) return null;
+  if (fivePoints.length < 5) return null;
 
   const scale = size / ARCFACE_INPUT_SIZE;
   const template = ARCFACE_TEMPLATE.map((point) => ({
@@ -179,4 +205,14 @@ export function alignFaceToCanvas(
   context.drawImage(input, 0, 0);
 
   return canvas;
+}
+
+export function alignFaceToCanvas(
+  input: CanvasImageSource,
+  positions: readonly Point[],
+  size: number = ARCFACE_INPUT_SIZE
+): HTMLCanvasElement | null {
+  const fivePoints = toFivePoints(positions);
+  if (!fivePoints) return null;
+  return alignFaceToCanvasFromFivePoints(input, fivePoints, size);
 }

@@ -1,6 +1,11 @@
 "use client";
 
-import { ARCFACE_INPUT_SIZE, alignFaceToCanvas, type Point } from "@/lib/ai/face-align";
+import {
+  ARCFACE_INPUT_SIZE,
+  alignFaceToCanvas,
+  alignFaceToCanvasFromFivePoints,
+  type Point,
+} from "@/lib/ai/face-align";
 
 /**
  * Embedding facial ArcFace (identidad). No usar para comparar prendas ni cuerpo
@@ -186,7 +191,7 @@ export async function embedAlignedFace(
 }
 
 /**
- * Alinea con los 68 landmarks de face-api y devuelve el embedding de 512.
+ * Alinea con 68 landmarks (face-api legacy) y devuelve el embedding de 512.
  * Null si los landmarks no permiten estimar la transformación.
  */
 export async function embedFaceFromLandmarks(
@@ -194,6 +199,16 @@ export async function embedFaceFromLandmarks(
   positions: readonly Point[]
 ): Promise<number[] | null> {
   const aligned = alignFaceToCanvas(input, positions);
+  if (!aligned) return null;
+  return embedAlignedFace(aligned);
+}
+
+/** Alinea con los 5 puntos canónicos (MediaPipe u otra fuente) y embebe. */
+export async function embedFaceFromFivePoints(
+  input: CanvasImageSource,
+  fivePoints: readonly Point[]
+): Promise<number[] | null> {
+  const aligned = alignFaceToCanvasFromFivePoints(input, fivePoints);
   if (!aligned) return null;
   return embedAlignedFace(aligned);
 }

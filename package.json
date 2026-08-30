@@ -14,7 +14,8 @@
     "db:studio": "prisma studio",
     "face:model": "curl -fsSL -o public/models/w600k_mbf.onnx https://huggingface.co/deepghs/insightface/resolve/main/buffalo_s/w600k_mbf.onnx",
     "face:runtime": "mkdir -p public/ort && cp node_modules/onnxruntime-web/dist/ort.wasm.bundle.min.mjs node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm public/ort/",
-    "face:setup": "pnpm face:model && pnpm face:runtime",
+    "face:mediapipe": "bash scripts/setup-mediapipe.sh",
+    "face:setup": "pnpm face:model && pnpm face:runtime && pnpm face:mediapipe",
     "mcp:test": "pnpm --filter @cuenti/hr-mcp-server test",
     "mcp:build": "pnpm --filter @cuenti/hr-mcp-server build",
     "mcp:dev:http": "pnpm --filter @cuenti/hr-mcp-server dev:http",
@@ -32,6 +33,7 @@
   "dependencies": {
     "@ducanh2912/next-pwa": "10.2.9",
     "@hookform/resolvers": "5.4.0",
+    "@mediapipe/tasks-vision": "1.0.1",
     "@prisma/client": "5.22.0",
     "@radix-ui/react-accordion": "1.2.16",
     "@radix-ui/react-alert-dialog": "1.1.19",

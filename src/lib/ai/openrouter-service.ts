@@ -11,6 +11,8 @@ export interface LivenessResult {
 /**
  * Cliente: pide liveness al backend. La clave OpenRouter vive solo en el servidor.
  */
+const LIVENESS_TIMEOUT_MS = 4000;
+
 export async function checkLiveness(
   imageDataUrl: string
 ): Promise<LivenessResult> {
@@ -20,6 +22,7 @@ export async function checkLiveness(
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
       body: JSON.stringify({ imageDataUrl }),
+      signal: AbortSignal.timeout(LIVENESS_TIMEOUT_MS),
     });
 
     if (!res.ok) {

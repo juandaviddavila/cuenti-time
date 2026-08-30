@@ -96,17 +96,33 @@ export async function POST(request: NextRequest) {
   const second = matches[1];
 
   if (!best) {
+    console.info("[face/search] empty_gallery", {
+      companyId: session.companyId,
+      branchId: parsed.data.branchId?.toString() ?? null,
+    });
     return NextResponse.json({
       match: null,
-      reason: "no_match",
+      reason: "empty_gallery",
       threshold: companyThreshold,
     });
   }
 
+  const bestDistance = Number(best.distance);
+  const secondDistance = second ? Number(second.distance) : null;
   const decision = decideFaceMatch({
-    bestDistance: Number(best.distance),
-    secondDistance: second ? Number(second.distance) : null,
+    bestDistance,
+    secondDistance,
     companyThreshold,
+  });
+
+  console.info("[face/search]", {
+    reason: decision.reason,
+    distance: Number(bestDistance.toFixed(4)),
+    secondDistance:
+      secondDistance == null ? null : Number(secondDistance.toFixed(4)),
+    employeeId: best.employeeId,
+    threshold: companyThreshold,
+    effectiveThreshold: decision.effectiveThreshold,
   });
 
   if (!decision.ok) {
@@ -116,10 +132,11 @@ export async function POST(request: NextRequest) {
       threshold: companyThreshold,
       effectiveThreshold: decision.effectiveThreshold,
       margin: decision.margin,
+      distance: bestDistance,
       candidates: {
-        best: { employeeId: best.employeeId, distance: Number(best.distance) },
+        best: { employeeId: best.employeeId, distance: bestDistance },
         second: second
-          ? { employeeId: second.employeeId, distance: Number(second.distance) }
+          ? { employeeId: second.employeeId, distance: secondDistance }
           : null,
       },
     });
@@ -132,8 +149,8 @@ export async function POST(request: NextRequest) {
       position: best.position,
       photo: best.photo,
       branchId: best.branchId,
-      distance: Number(best.distance),
-      secondDistance: second ? Number(second.distance) : null,
+      distance: bestDistance,
+      secondDistance,
     },
     reason: "match",
     threshold: companyThreshold,

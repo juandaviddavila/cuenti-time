@@ -166,17 +166,20 @@ AuditLog (registra todos los cambios)
 
 ```
 src/lib/ai/
-├── face-api-service.ts      # Detección + landmarks (face-api) y API pública detectFace()
-├── face-align.ts            # 68 landmarks → 5 puntos → similitud → canvas 112x112
+├── mediapipe-face.ts        # Detección + landmarks (MediaPipe Face Landmarker)
+├── face-detection-loop.ts   # rAF con candado; presencia cada ~200ms
+├── face-api-service.ts      # Presencia TinyFace; detectFace / detectFaceConsensus (mismo frame)
+├── face-align.ts            # 5 puntos (MediaPipe o 68 legacy) → similitud → canvas 112x112
 ├── arcface-service.ts       # onnxruntime-web: w600k_mbf.onnx → embedding 512-D
 ├── pgvector.ts              # Serialización del vector (FACE_EMBEDDING_DIMENSIONS = 512)
 ├── openrouter-liveness.ts   # Anti-spoofing (servidor)
-└── openrouter-service.ts    # Cliente de liveness
+└── openrouter-service.ts    # Cliente de liveness (timeout 4s)
 ```
 
-**Pipeline:** `tinyFaceDetector` → `faceLandmark68Net` → 5 puntos canónicos → transformación
-de similitud a 112×112 → ArcFace MobileFaceNet (ONNX) → vector L2-normalizado de 512 →
-pgvector con distancia coseno (`<=>`).
+**Pipeline:** TinyFaceDetector + landmark 68 (presencia ~200 ms) → 2 frames estables →
+`detectFaceConsensus` (espera 2 embeddings seguidos parecidos; no promedia frames movidos) →
+alineación 112×112 → ArcFace 512-D → `POST /api/face/search` (pgvector `<=>`).
+MediaPipe no bloquea la carga. No correr ArcFace en cada tick.
 
 - **Solo identidad facial.** ArcFace responde *quién es*; no sirve para comparar prendas
   ni cuerpo entero. Se entrena para que la misma persona quede cerca *aunque cambie de
@@ -185,13 +188,18 @@ pgvector con distancia coseno (`<=>`).
   negativos sistemáticos. Fase futura (pipeline aparte): `docs/clothing-checkout-alert.md`.
 - **La alineación no es opcional.** ArcFace se entrenó sobre recortes deformados a la
   plantilla canónica de InsightFace; sin ese paso la precisión cae de forma notable.
-- `detectFace()` mantiene la firma histórica: si el rostro se detecta pero no se puede
-  alinear, devuelve `descriptor: null` y los callers lo tratan como no identificable.
+- `detectFacePresence()` es barato (solo TinyFace). `detectFace()` / `detectFaceConsensus()`
+  corren ArcFace sobre el mismo fotograma. Si hay cara pero no 5 puntos, `descriptor`
+  es null y el UI dice “rostro visible, no se pudo alinear”, no “buscando rostro”.
+- `POST /api/face/search`: `empty_gallery` si no hay embeddings; `no_match` si la
+  distancia ≥ umbral (incluye `distance` y `candidates`). Umbral default 0.5.
+- Loop de cámara: `startFacePresenceLoop` (rAF + candado). No `setInterval` async.
+- Kiosco/registro **no** re-embeben fotos al abrir; solo usan `faceEmbedding` ya guardados.
 - **Escala de distancias:** coseno, no euclidiana. Los umbrales de la etapa face-api
   (128-D) no son comparables. Centralizados en `src/lib/face-match-threshold.ts`.
-- **Assets:** `public/models/w600k_mbf.onnx` (13 MB) y `public/ort/*.wasm` (13 MB).
-  Regenerarlos con `pnpm face:setup`. Excluidos del precache del service worker y
-  cacheados en runtime (`CacheFirst`, cache `face-engine`).
+- **Assets:** `public/models/w600k_mbf.onnx`, `public/models/face_landmarker.task`,
+  `public/mediapipe/wasm/*`, `public/ort/*.wasm`. Regenerar con `pnpm face:setup`.
+  Excluidos del precache del SW; cache `face-engine` en runtime.
 - **Importar `onnxruntime-web/wasm`, nunca el paquete raíz.** El entry raíz expone una
   condición `node` que Next resuelve en la compilación de servidor y Terser falla al
   minificar ese archivo (`'import' cannot be used outside of module code`).
@@ -509,10 +517,11 @@ src/app/api/
 - Tras cambiar `schema.prisma`: `pnpm db:generate && pnpm db:push` y **reiniciar** el proceso `next` (el client no hot-reloadea).
 - El reset de BigInt ya fue ejecutado en desarrollo y eliminó los datos anteriores; requiere `db:seed` para restaurar las credenciales de prueba.
 
-*Última actualización: 2026-08-21. ArcFace solo para identidad facial; no reutilizar
-embeddings/umbrales faciales para comparar prendas (diseño fase futura en
-`docs/clothing-checkout-alert.md`). Motor facial: ArcFace MobileFaceNet 512-D +
-onnxruntime-web; pgvector `vector(512)` coseno; `/settings/face-migration` y
-`/settings/face-diagnostics`. Pendiente: licencia InsightFace comercial.*
+*Última actualización: 2026-08-29. Identidad: mismo fotograma + consenso de 3
+frames (evita no_match intermitente). TinyFace detecta; ArcFace solo al
+identificar/enrolar. Search distingue empty_gallery vs distancia alta.
+ArcFace solo para identidad facial; no reutilizar embeddings/umbrales para
+prendas (`docs/clothing-checkout-alert.md`). Motor: MobileFaceNet 512-D +
+onnxruntime-web; pgvector coseno. Pendiente: licencia InsightFace comercial.*
 
 *Anterior: 2026-07-20 (noche). Cuenti Pay: plan gratis (default 3 empleados) + plan pago **mensual** COP/USD por empleado, precios/límites leídos desde `BillingConfig` en DB (nunca quemados); checkout/webhook/void + landing dinámica. BigInt autoincrement + serialización de IDs; build verificado; MCP OAuth 2.1 adicional + Bearer; webhooks 1+3×10min; Integraciones Tokens|MCP|Webhooks; deps exactas; faceMatchThreshold; header sin buscador. Dev: `http://localhost:7578`, MCP `:4101`.*
