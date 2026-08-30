@@ -21,4 +21,4 @@
 ## Phase 4: Verify
 
 - [ ] **T-010**: Manual smoke: login → wait/force access expiry → refresh works
-- [ ] **T-011**: Decode new refresh JWT and confirm no `exp` claim
+- [x] **T-011**: Decode new refresh JWT and confirm no `exp` claim

@@ -9,8 +9,8 @@
 
 ## Calidad + UX de enrolamiento
 - [x] T-006 `src/lib/ai/face-quality.ts` (nitidez, luminancia, roll, yaw)
-- [x] T-007 Enrolamiento por etapas frontal/izq/der con `onProgress`
-- [x] T-008 Feedback visual por etapa en dialog y facial-registration
+- [x] T-007 `captureManualTemplate` (captura manual con gate; reemplaza el auto por etapas)
+- [x] T-008 Enrolamiento MANUAL por pasos: front/izq/der con botón Capturar/Repetir/Omitir/Guardar en dialog
 - [x] T-009 Anti-duplicados (`findDuplicateEnrollment`) en dialog y facial-registration
 - [x] T-010 Gate antes que embed: `detectAndAlignFace` + embed solo si pasa gates
 
@@ -29,5 +29,5 @@
 
 ## Pendientes
 - [ ] T-020 Probar en kiosco/tablet real (agilidad + fallback servidor)
-- [ ] T-021 Re-enrolar empleados para generar 3 plantillas
-- [ ] T-022 Deploy a app-time.cuenti.co (pack-deploy + server-update)
+- [ ] T-021 Re-enrolar empleados para generar múltiples plantillas (frontal + giros)
+- [x] T-022 Deploy a app-time.cuenti.co (pack-deploy + server-update) — verificado 401/200
