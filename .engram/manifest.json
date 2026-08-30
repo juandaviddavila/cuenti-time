@@ -120,6 +120,14 @@
       "sessions": 1,
       "memories": 9,
       "prompts": 0
+    },
+    {
+      "id": "15d8535d",
+      "created_by": "juandaviddavila",
+      "created_at": "2026-08-30T18:44:59Z",
+      "sessions": 1,
+      "memories": 25,
+      "prompts": 34
     }
   ]
 }
