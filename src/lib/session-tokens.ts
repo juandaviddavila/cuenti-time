@@ -54,11 +54,15 @@ export async function signAccessToken(payload: TokenPayload): Promise<string> {
     .sign(getJwtSecret());
 }
 
+/** 10 años en segundos (sessión "permanente" mientras haya uso). */
+const REFRESH_TOKEN_MAX_AGE = 60 * 60 * 24 * 365 * 10;
+
 export async function signRefreshToken(payload: TokenPayload): Promise<string> {
+  // Sin exp: el refresh no vence por tiempo. Solo termina por logout,
+  // desactivación del usuario o email sin verificar.
   return new SignJWT({ ...payload })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime("7d")
     .sign(getJwtRefreshSecret());
 }
 
@@ -79,7 +83,7 @@ export function setAuthCookies(
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 60 * 60 * 24 * 7,
+    maxAge: REFRESH_TOKEN_MAX_AGE,
     path: "/",
   });
 }

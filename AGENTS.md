@@ -321,7 +321,7 @@ src/app/api/
 ## Seguridad
 
 - Contraseñas: `bcryptjs` con salt rounds = 12
-- JWT: access token (15min) + refresh token (7d) en httpOnly cookie
+- JWT: access token (15min) + refresh token sin `exp` (sesión permanente) en httpOnly cookie (maxAge 10 años)
 - Protección de rutas: `src/middleware.ts` valida JWT en cada request a `(dashboard)`
 - Datos biométricos: solo se guarda el embedding (vector numérico), nunca la imagen original en producción
 - Consentimiento biométrico: `Employee.biometricConsentAt` (timestamp de aceptación)
@@ -364,7 +364,7 @@ src/app/api/
 - **Refresh token:** Firmado con `JWT_REFRESH_SECRET` separado del `JWT_SECRET`.
 - **httpOnly cookies:** El token vive en cookie `access-token` httpOnly. El Zustand store NUNCA persiste el token (solo `user` e `isAuthenticated`).
 - **Bootstrap de sesión:** `AuthSessionProvider` llama `GET /api/auth/me` al montar; si falla con 401 intenta `POST /api/auth/refresh` y rehidrata el perfil. Así la sesión sobrevive reinicios del servidor Next.js (mismos JWT secrets).
-- **Refresh deslizante:** `/api/auth/refresh` y el middleware renuevan access + refresh (ventana de 7 días mientras haya uso).
+- **Refresh deslizante:** `/api/auth/refresh` y el middleware renuevan access + refresh. El refresh no vence por tiempo (sin `exp`); la sesión solo termina por logout, desactivación o email sin verificar.
 - **Logout:** Siempre llamar `POST /api/auth/logout` antes de limpiar el store — borra las cookies del servidor.
 - **Rate limiting:** Usar `rateLimit()` de `src/lib/rate-limit.ts` en todos los endpoints de auth. 10 req/min para login, 5 req/15min para register.
 - **Validación server-side:** Todo API route valida con Zod antes de tocar la DB.

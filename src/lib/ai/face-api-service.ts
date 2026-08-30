@@ -447,40 +447,31 @@ export function cosineDistance(a: number[], b: number[]): number {
 }
 
 /**
- * Embedding de ENROLAMIENTO por etapas: frontal (3 muestras) + giro izquierda
- * y derecha (2 c/u, se omiten si no logra el giro). Cada muestra pasa gates de
- * calidad (nitidez, luz, pose) y se descartan outliers. Devuelve una plantilla
- * por etapa: el match por mínima distancia gana robustez ante luz/ángulo.
+ * Captura MANUAL para enrolamiento: el usuario posa y pulsa "Capturar".
+ * Toma hasta `samples` muestras estables que pasen los gates de calidad
+ * dentro del presupuesto de tiempo y devuelve su promedio (una sola plantilla).
+ * Gate antes que embed: el embedding ArcFace (caro) solo se calcula si los
+ * gates pasan. `expectTurn` valida el giro (null = frontal, "left"/"right").
  */
-export interface EnrollmentProgress {
-  stage: "frontal" | "left" | "right";
-  samples: number;
-  target: number;
+export interface ManualCaptureResult {
+  descriptor: number[] | null;
   issue?: string;
-}
-
-export interface EnrollmentCaptureResult {
-  templates: number[][];
-  frontal: number[] | null;
 }
 
 const ENROLL_OUTLIER_DISTANCE = 0.35;
 
-async function collectStage(
+export async function captureManualTemplate(
   input: HTMLVideoElement,
-  stage: EnrollmentProgress["stage"],
-  target: number,
-  maxMs: number,
-  onProgress?: (progress: EnrollmentProgress) => void
-): Promise<number[] | null> {
-  const expectTurn: ExpectedTurn = stage === "frontal" ? null : stage;
+  expectTurn: ExpectedTurn,
+  options?: { samples?: number; maxMs?: number }
+): Promise<ManualCaptureResult> {
+  const target = options?.samples ?? 3;
+  const maxMs = options?.maxMs ?? 2200;
   const started = Date.now();
   const vectors: number[][] = [];
   let lastIssue: string | undefined;
 
   while (vectors.length < target && Date.now() - started < maxMs) {
-    // Gate antes que embed: detectar+alinear+gates son baratos; el embedding
-    // ArcFace (caro) solo se calcula si el frame pasa los gates.
     const result = await detectAndAlignFace(input);
     const aligned = result.alignedCanvas;
 
@@ -493,7 +484,6 @@ async function collectStage(
       } else {
         const descriptor = await embedFromAligned(aligned);
         if (!descriptor) {
-          // Gates OK pero el embedding falló (WASM y servidor): reintento.
           lastIssue = "Procesando rostro — un momento";
         } else {
           const isOutlier = vectors.some(
@@ -510,39 +500,11 @@ async function collectStage(
       }
     }
 
-    onProgress?.({ stage, samples: vectors.length, target, issue: lastIssue });
-    if (vectors.length < target) await wait(120);
+    if (vectors.length < target) await wait(90);
   }
 
-  if (vectors.length === 0) return null;
-  return averageFaceEmbeddings(vectors);
-}
-
-export async function captureEnrollmentTemplates(
-  input: HTMLVideoElement,
-  onProgress?: (progress: EnrollmentProgress) => void
-): Promise<EnrollmentCaptureResult> {
-  const frontal = await collectStage(input, "frontal", 3, 6000, onProgress);
-  const templates: number[][] = frontal ? [frontal] : [];
-
-  if (frontal) {
-    const left = await collectStage(input, "left", 2, 3500, onProgress);
-    if (left) templates.push(left);
-    const right = await collectStage(input, "right", 2, 3500, onProgress);
-    if (right) templates.push(right);
-  }
-
-  return { templates, frontal };
-}
-
-export function enrollmentStageLabel(progress: EnrollmentProgress): string {
-  const stageText =
-    progress.stage === "frontal"
-      ? `Frontal ${progress.samples}/${progress.target}`
-      : progress.stage === "left"
-        ? `Giro a su izquierda ${progress.samples}/${progress.target}`
-        : `Giro a su derecha ${progress.samples}/${progress.target}`;
-  return progress.issue ? `${stageText} — ${progress.issue}` : stageText;
+  if (vectors.length === 0) return { descriptor: null, issue: lastIssue };
+  return { descriptor: averageFaceEmbeddings(vectors), issue: lastIssue };
 }
 
 /** Anti-duplicados: ¿este rostro ya pertenece a OTRO empleado? */

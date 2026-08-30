@@ -38,7 +38,13 @@ export async function POST(request: NextRequest) {
     });
 
     if (!user || user.status !== "ACTIVE" || !user.emailVerifiedAt) {
-      return NextResponse.json({ error: "Sesión no válida" }, { status: 401 });
+      const response = NextResponse.json(
+        { error: "Sesión no válida" },
+        { status: 401 }
+      );
+      response.cookies.delete("access-token");
+      response.cookies.delete("refresh-token");
+      return response;
     }
 
     const refreshedPayload = {

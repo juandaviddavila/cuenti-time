@@ -2,27 +2,21 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlertCircle, CheckCircle2, RotateCcw, Scan, XCircle,
+  AlertCircle, ArrowRight, Camera, CheckCircle2, RotateCcw, Scan, SkipForward, XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Progress } from "@/components/ui/progress";
 import {
-  captureEnrollmentTemplates,
-  enrollmentStageLabel,
+  captureManualTemplate,
   findDuplicateEnrollment,
   isModelsLoaded,
   loadModels,
-  type FacePresence,
 } from "@/lib/ai/face-api-service";
-import {
-  FACE_SOFT_RETRY_COOLDOWN_MS,
-  FACE_STABLE_HITS,
-  startFacePresenceLoop,
-} from "@/lib/ai/face-detection-loop";
-import { cn, getInitials, sleep } from "@/lib/utils";
+import { startFacePresenceLoop } from "@/lib/ai/face-detection-loop";
+import { cn, getInitials } from "@/lib/utils";
+import type { ExpectedTurn } from "@/lib/ai/face-quality";
 
 export interface FaceRegistrationEmployee {
   id: string;
@@ -38,8 +32,18 @@ interface Props {
   onSuccess: (result: { employeeId: string; photo: string | null }) => void;
 }
 
-type Phase = "loading_models" | "idle" | "processing" | "success" | "error";
+const STEPS: Array<{ key: string; label: string; hint: string; turn: ExpectedTurn }> = [
+  { key: "frontal", label: "Frente", hint: "Mire de frente a la cámara", turn: null },
+  { key: "left", label: "Izquierda", hint: "Gire levemente el rostro a su izquierda", turn: "left" },
+  { key: "right", label: "Derecha", hint: "Gire levemente el rostro a su derecha", turn: "right" },
+];
 
+interface CaptureSlot {
+  photo: string | null;
+  descriptor: number[];
+}
+
+type Phase = "loading_models" | "idle" | "capturing" | "saving" | "success" | "error";
 
 export function EmployeeFaceRegistrationDialog({
   open,
@@ -52,23 +56,23 @@ export function EmployeeFaceRegistrationDialog({
   const streamRef = useRef<MediaStream | null>(null);
   const stopLoopRef = useRef<(() => void) | null>(null);
   const processingRef = useRef(false);
-  const stableHitsRef = useRef(0);
-  const softRetryUntilRef = useRef(0);
   const employeeRef = useRef(employee);
+  const stepIndexRef = useRef(0);
+  const capturesRef = useRef<Array<CaptureSlot | null>>([]);
   const phaseRef = useRef<Phase>("loading_models");
-  const lastPresenceRef = useRef<FacePresence | null>(null);
 
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [phase, setPhase] = useState<Phase>("loading_models");
   const [faceDetected, setFaceDetected] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [progressLabel, setProgressLabel] = useState("");
-  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [stepIndex, setStepIndex] = useState(0);
+  const [captures, setCaptures] = useState<Array<CaptureSlot | null>>([null, null, null]);
+  const [captureMsg, setCaptureMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
-  const [scanMessage, setScanMessage] = useState("Inicializando reconocimiento...");
 
   employeeRef.current = employee;
+  capturesRef.current = captures;
+  stepIndexRef.current = stepIndex;
   phaseRef.current = phase;
 
   function stopDetectionLoop() {
@@ -87,23 +91,18 @@ export function EmployeeFaceRegistrationDialog({
     stopDetectionLoop();
     stopCamera();
     processingRef.current = false;
-    stableHitsRef.current = 0;
-    softRetryUntilRef.current = 0;
   }
 
   async function startCamera() {
     setCameraError("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          setCameraActive(true);
-          setScanMessage("Coloque el rostro en el óvalo");
-        };
+        videoRef.current.onloadedmetadata = () => setCameraActive(true);
       }
     } catch {
       setCameraError("No se pudo acceder a la cámara. Verifique los permisos del navegador.");
@@ -114,57 +113,79 @@ export function EmployeeFaceRegistrationDialog({
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return null;
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.drawImage(video, 0, 0);
     return canvas.toDataURL("image/jpeg", 0.85);
   }
 
-  const resumeSoftRetry = useCallback((message: string) => {
-    processingRef.current = false;
-    stableHitsRef.current = 0;
-    softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
-    setProgress(0);
-    setProgressLabel("");
-    setCapturedPhoto(null);
-    setErrorMsg("");
-    setScanMessage(message);
-    setPhase("idle");
+  const startPresenceLoop = useCallback(() => {
+    if (stopLoopRef.current) return;
+    stopLoopRef.current = startFacePresenceLoop({
+      getVideo: () => videoRef.current,
+      shouldRun: () => phaseRef.current === "idle" && !processingRef.current,
+      onTick: (presence) => setFaceDetected(presence.detected),
+    });
   }, []);
 
-  const triggerCapture = useCallback(async () => {
-    const activeEmployee = employeeRef.current;
-    if (!activeEmployee || processingRef.current) return;
+  const captureStep = useCallback(async () => {
+    if (processingRef.current) return;
+    const idx = stepIndexRef.current;
+    const step = STEPS[idx];
     processingRef.current = true;
-    setPhase("processing");
-    stopDetectionLoop();
-
-    const photo = captureFrame();
-    setCapturedPhoto(photo);
-
-    setProgress(10);
-    setProgressLabel("Detectando rostro...");
-    await sleep(200);
+    setPhase("capturing");
+    setCaptureMsg(`Capturando ${step.label.toLowerCase()}...`);
 
     const video = videoRef.current;
-    setProgress(25);
-    setProgressLabel("Frontal 0/3");
-    const capture = video
-      ? await captureEnrollmentTemplates(video, (p) =>
-          setProgressLabel(enrollmentStageLabel(p))
-        )
-      : null;
-    if (!capture?.frontal) {
-      resumeSoftRetry("Acomode el rostro en el óvalo — seguimos intentando...");
+    const result = video
+      ? await captureManualTemplate(video, step.turn)
+      : { descriptor: null as number[] | null, issue: "Cámara no disponible" };
+
+    if (!result.descriptor) {
+      processingRef.current = false;
+      setCaptureMsg(result.issue ?? "No se pudo capturar el rostro. Intente de nuevo.");
+      setPhase("idle");
       return;
     }
 
-    setProgress(60);
-    setProgressLabel("Verificando duplicados...");
+    const photo = captureFrame();
+    setCaptures((prev) => {
+      const next = [...prev];
+      next[idx] = { photo, descriptor: result.descriptor as number[] };
+      return next;
+    });
+    processingRef.current = false;
+    setCaptureMsg("");
+    setPhase("idle");
+    if (idx < 2) setStepIndex(idx + 1);
+  }, []);
+
+  const repeatStep = useCallback(() => {
+    const idx = stepIndexRef.current;
+    setCaptures((prev) => {
+      const next = [...prev];
+      next[idx] = null;
+      return next;
+    });
+    setCaptureMsg("");
+  }, []);
+
+  const skipStep = useCallback(() => {
+    if (stepIndexRef.current < 2) setStepIndex(stepIndexRef.current + 1);
+  }, []);
+
+  const save = useCallback(async () => {
+    const activeEmployee = employeeRef.current;
+    const frontal = capturesRef.current[0];
+    if (!activeEmployee || !frontal?.descriptor || processingRef.current) return;
+
+    processingRef.current = true;
+    setPhase("saving");
+    setCaptureMsg("Verificando duplicados...");
     const duplicate = await findDuplicateEnrollment(
-      capture.frontal,
+      frontal.descriptor,
       activeEmployee.id
     );
     if (duplicate) {
@@ -176,8 +197,11 @@ export function EmployeeFaceRegistrationDialog({
       return;
     }
 
-    setProgress(75);
-    setProgressLabel("Guardando plantillas biométricas...");
+    const templates = capturesRef.current
+      .filter((slot): slot is CaptureSlot => Boolean(slot))
+      .map((slot) => slot.descriptor);
+
+    setCaptureMsg("Guardando plantillas biométricas...");
     try {
       const res = await fetch(`/api/employees/${activeEmployee.id}`, {
         method: "PUT",
@@ -186,9 +210,9 @@ export function EmployeeFaceRegistrationDialog({
           faceRegistered: true,
           faceRegisteredAt: new Date().toISOString(),
           biometricConsentAt: new Date().toISOString(),
-          faceEmbedding: capture.frontal,
-          faceTemplates: capture.templates,
-          ...(photo ? { photo } : {}),
+          faceEmbedding: frontal.descriptor,
+          faceTemplates: templates,
+          ...(frontal.photo ? { photo: frontal.photo } : {}),
         }),
       });
 
@@ -197,13 +221,10 @@ export function EmployeeFaceRegistrationDialog({
         throw new Error(err.error ?? "Error al guardar el registro facial");
       }
 
-      setProgress(100);
-      setProgressLabel("Registro completado");
-      await sleep(400);
       stopCamera();
       setPhase("success");
       toast.success(`Rostro de ${activeEmployee.fullName} registrado correctamente`);
-      onSuccess({ employeeId: activeEmployee.id, photo });
+      onSuccess({ employeeId: activeEmployee.id, photo: frontal.photo });
     } catch (err) {
       stopCamera();
       setErrorMsg(err instanceof Error ? err.message : "Error inesperado");
@@ -211,61 +232,29 @@ export function EmployeeFaceRegistrationDialog({
     } finally {
       processingRef.current = false;
     }
-  }, [onSuccess, resumeSoftRetry]);
+  }, [onSuccess]);
 
-  const startDetectionLoop = useCallback(() => {
-    if (stopLoopRef.current) return;
-    stopLoopRef.current = startFacePresenceLoop({
-      getVideo: () => videoRef.current,
-      shouldRun: () =>
-        phaseRef.current === "idle" &&
-        !processingRef.current &&
-        Date.now() >= softRetryUntilRef.current,
-      onTick: (presence) => {
-        lastPresenceRef.current = presence;
-        setFaceDetected(presence.detected);
-
-        if (!presence.detected) {
-          stableHitsRef.current = 0;
-          setScanMessage("Sin rostro a la vista. Mire de frente");
-          return;
-        }
-
-        stableHitsRef.current += 1;
-        const hits = stableHitsRef.current;
-        if (hits < FACE_STABLE_HITS) {
-          setScanMessage(`Rostro detectado — mantenga la posición (${hits}/${FACE_STABLE_HITS})`);
-          return;
-        }
-
-        setScanMessage("Posición estable. Capturando...");
-        void triggerCapture();
-      },
-    });
-  }, [triggerCapture]);
-
-  // Boot / teardown when dialog opens or closes
+  // Boot / teardown
   useEffect(() => {
     if (!open || !employee) {
       cleanup();
       setPhase("loading_models");
       setCameraError("");
-      setProgress(0);
-      setProgressLabel("");
-      setCapturedPhoto(null);
+      setCaptureMsg("");
       setErrorMsg("");
-      setScanMessage("Inicializando reconocimiento...");
+      setCaptures([null, null, null]);
+      setStepIndex(0);
       return;
     }
 
     let cancelled = false;
     setPhase("loading_models");
-    setScanMessage("Cargando modelos...");
+    setCaptures([null, null, null]);
+    setStepIndex(0);
     loadModels()
       .then(() => {
         if (cancelled) return;
         setPhase("idle");
-        setScanMessage("Modelos cargados. Activando cámara...");
         void startCamera();
       })
       .catch((err) => {
@@ -284,12 +273,12 @@ export function EmployeeFaceRegistrationDialog({
 
   useEffect(() => {
     if (open && cameraActive && phase === "idle" && isModelsLoaded()) {
-      startDetectionLoop();
+      startPresenceLoop();
     } else {
       stopDetectionLoop();
     }
     return () => stopDetectionLoop();
-  }, [open, cameraActive, phase, startDetectionLoop]);
+  }, [open, cameraActive, phase, startPresenceLoop]);
 
   function handleClose() {
     cleanup();
@@ -298,14 +287,11 @@ export function EmployeeFaceRegistrationDialog({
 
   function retryHardError() {
     setPhase("idle");
-    setProgress(0);
-    setProgressLabel("");
-    setCapturedPhoto(null);
+    setCaptureMsg("");
     setErrorMsg("");
+    setCaptures([null, null, null]);
+    setStepIndex(0);
     processingRef.current = false;
-    stableHitsRef.current = 0;
-    softRetryUntilRef.current = 0;
-    setScanMessage("Coloque el rostro en el óvalo");
     stopDetectionLoop();
     void startCamera();
   }
@@ -313,6 +299,9 @@ export function EmployeeFaceRegistrationDialog({
   const statusText = employee?.faceRegistered
     ? "Re-registro — se sobreescribirá el rostro existente"
     : "Primer registro facial";
+
+  const frontalDone = Boolean(captures[0]?.descriptor);
+  const currentStep = STEPS[stepIndex];
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) handleClose(); }}>
@@ -339,10 +328,37 @@ export function EmployeeFaceRegistrationDialog({
           </div>
         )}
 
-        <div
-          className="relative bg-black overflow-hidden mx-auto w-full"
-          style={{ aspectRatio: "4/3", maxHeight: "420px" }}
-        >
+        {/* Stepper */}
+        <div className="px-5 pb-3 flex items-center gap-2">
+          {STEPS.map((step, i) => {
+            const done = Boolean(captures[i]?.descriptor);
+            const active = i === stepIndex && phase === "idle";
+            return (
+              <div key={step.key} className="flex items-center gap-2">
+                <div
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-full px-3 py-1 text-xs border",
+                    done
+                      ? "bg-green-500/10 border-green-500 text-green-600 dark:text-green-400"
+                      : active
+                        ? "bg-primary/10 border-primary text-primary font-medium"
+                        : "bg-muted/40 border-border text-muted-foreground"
+                  )}
+                >
+                  {done ? <CheckCircle2 className="w-3.5 h-3.5" /> : (
+                    <span className="w-3.5 h-3.5 rounded-full border border-current text-[10px] flex items-center justify-center">
+                      {i + 1}
+                    </span>
+                  )}
+                  {step.label}
+                </div>
+                {i < 2 && <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="relative bg-black overflow-hidden mx-auto w-full" style={{ aspectRatio: "4/3", maxHeight: "380px" }}>
           <video
             ref={videoRef}
             autoPlay
@@ -369,7 +385,7 @@ export function EmployeeFaceRegistrationDialog({
           {phase === "loading_models" && (
             <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center gap-3">
               <div className="w-10 h-10 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-              <p className="text-white/80 text-sm">{scanMessage}</p>
+              <p className="text-white/80 text-sm">Cargando modelos de IA...</p>
             </div>
           )}
 
@@ -383,48 +399,36 @@ export function EmployeeFaceRegistrationDialog({
             </div>
           )}
 
-          {phase === "idle" && !cameraError && (
+          {(phase === "idle" || phase === "capturing") && !cameraError && (
             <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent p-4 text-center">
-              <p className="text-white text-sm font-medium">{scanMessage}</p>
-              <p className="text-white/60 text-xs mt-1">
-                Mantenga la posición unos segundos
+              <p className="text-white text-sm font-medium">
+                {phase === "capturing"
+                  ? captureMsg
+                  : `${stepIndex + 1}/3 · ${currentStep.hint}`}
               </p>
             </div>
           )}
 
-          {phase === "processing" && (
+          {phase === "saving" && (
             <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center gap-4 p-6">
               <div className="w-14 h-14 rounded-full bg-primary/80 flex items-center justify-center animate-pulse">
                 <Scan className="w-7 h-7 text-white" />
               </div>
-              <div className="text-center">
-                <p className="text-white font-semibold">Procesando biometría...</p>
-                <p className="text-white/60 text-xs mt-1">{progressLabel}</p>
-              </div>
-              <div className="w-full max-w-xs space-y-1">
-                <div className="flex justify-between text-xs text-white/70">
-                  <span>Progreso</span>
-                  <span>{progress}%</span>
-                </div>
-                <Progress value={progress} className="h-2" />
-              </div>
+              <p className="text-white text-sm">{captureMsg}</p>
             </div>
           )}
 
           {phase === "success" && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-900">
-              <div className="relative w-24 h-24 rounded-full overflow-hidden border-4 border-green-400">
-                {(employee?.photo || capturedPhoto) && (
+              <div className="w-24 h-24 rounded-full border-4 border-green-400 overflow-hidden">
+                {(captures[0]?.photo || employee?.photo) && (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={capturedPhoto ?? employee?.photo ?? ""}
+                    src={captures[0]?.photo ?? employee?.photo ?? ""}
                     alt={employee?.fullName ?? ""}
                     className="w-full h-full object-cover"
                   />
                 )}
-                <div className="absolute -bottom-1 -right-1 bg-green-500 rounded-full p-1">
-                  <CheckCircle2 className="w-5 h-5 text-white" />
-                </div>
               </div>
               <p className="text-white text-lg font-bold">¡Registrado!</p>
               <p className="text-green-200 text-sm">{employee?.fullName}</p>
@@ -440,7 +444,8 @@ export function EmployeeFaceRegistrationDialog({
           )}
         </div>
 
-        <div className="p-4 flex justify-end gap-2">
+        {/* Acciones */}
+        <div className="p-4 flex flex-wrap items-center justify-end gap-2">
           {phase === "success" ? (
             <Button onClick={handleClose}>Listo</Button>
           ) : phase === "error" ? (
@@ -451,14 +456,47 @@ export function EmployeeFaceRegistrationDialog({
                 Reintentar
               </Button>
             </>
-          ) : (
+          ) : stepIndex >= 2 ? (
+            // Llegamos a la derecha (capturada o no): guardar o repetir.
             <>
-              <Button variant="outline" onClick={handleClose} disabled={phase === "processing"}>
-                Cancelar
+              <Button variant="outline" onClick={handleClose}>Cancelar</Button>
+              {Boolean(captures[2]?.descriptor) && (
+                <Button variant="outline" onClick={repeatStep}>
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Repetir {currentStep.label.toLowerCase()}
+                </Button>
+              )}
+              <Button onClick={captureStep} disabled={processingRef.current || !cameraActive}>
+                <Camera className="w-4 h-4 mr-2" />
+                {Boolean(captures[2]?.descriptor) ? "Repetir" : "Capturar derecha"}
               </Button>
-              {phase === "idle" && cameraActive && !cameraError && (
-                <Button onClick={() => void triggerCapture()} disabled={processingRef.current}>
-                  Capturar ahora
+              <Button onClick={save} disabled={!frontalDone || processingRef.current}>
+                Guardar registro
+              </Button>
+            </>
+          ) : (
+            // Frontal (step 0) o izquierda (step 1)
+            <>
+              <Button variant="outline" onClick={handleClose}>Cancelar</Button>
+              {stepIndex > 0 && (
+                <Button variant="outline" onClick={skipStep}>
+                  <SkipForward className="w-4 h-4 mr-2" />
+                  Omitir
+                </Button>
+              )}
+              {Boolean(captures[stepIndex]?.descriptor) && (
+                <Button variant="outline" onClick={repeatStep}>
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Repetir
+                </Button>
+              )}
+              <Button onClick={captureStep} disabled={processingRef.current || !cameraActive}>
+                <Camera className="w-4 h-4 mr-2" />
+                Capturar {currentStep.label.toLowerCase()}
+              </Button>
+              {frontalDone && (
+                <Button onClick={save} disabled={processingRef.current}>
+                  Guardar
                 </Button>
               )}
             </>

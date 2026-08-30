@@ -74,7 +74,7 @@ conventions:
   styling: Tailwind CSS utility-first, mobile-first
   dark_mode: next-themes with class strategy
   api_pattern: Next.js API Routes with Zod validation
-  auth_pattern: JWT with httpOnly cookies, separate access/refresh tokens; AuthSessionProvider bootstraps from /api/auth/me + sliding refresh
+  auth_pattern: JWT with httpOnly cookies, separate access/refresh tokens; access 15min, refresh without exp (permanent, 10y cookie); AuthSessionProvider bootstraps from /api/auth/me + sliding refresh
   multi_tenancy: Company-based isolation with getCompanyFilter()
   role_based_access: 6-tier role system (REPORT_VIEWER to DEVELOPER)
   database_pattern: Prisma ORM with soft-delete and audit logs

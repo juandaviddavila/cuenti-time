@@ -16,8 +16,7 @@ import { cn, getInitials, sleep } from "@/lib/utils";
 import {
   loadModels,
   detectFaceConsensus,
-  captureEnrollmentTemplates,
-  enrollmentStageLabel,
+  captureManualTemplate,
   findDuplicateEnrollment,
   findBestMatch,
   isConfidentMatch,
@@ -490,22 +489,20 @@ function FacialRegistrationContent() {
     const isAttendancePath = automaticMode && !employeeId;
     setProgress(25);
     setProgressLabel(
-      isAttendancePath ? "Extrayendo descriptor facial..." : "Frontal 0/3"
+      isAttendancePath ? "Extrayendo descriptor facial..." : "Capturando rostro frontal..."
     );
 
     // En marcación el descriptor solo confirma que hay cara: una muestra basta.
-    // En enrolamiento se capturan plantillas frontal + giros con gates de calidad.
+    // En enrolamiento se captura una plantilla frontal con gates de calidad.
     let descriptor: number[] | null = null;
     let templates: number[][] | null = null;
     if (video) {
       if (isAttendancePath) {
         descriptor = (await detectFaceConsensus(video)).descriptor;
       } else {
-        const capture = await captureEnrollmentTemplates(video, (p) =>
-          setProgressLabel(enrollmentStageLabel(p))
-        );
-        descriptor = capture.frontal;
-        templates = capture.templates;
+        const capture = await captureManualTemplate(video, null);
+        descriptor = capture.descriptor;
+        templates = capture.descriptor ? [capture.descriptor] : null;
       }
     }
     if (!descriptor) {

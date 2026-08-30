@@ -14,7 +14,7 @@ const ACCESS_COOKIE = {
 const REFRESH_COOKIE = {
   httpOnly: true,
   sameSite: "lax" as const,
-  maxAge: 60 * 60 * 24 * 7,
+  maxAge: 60 * 60 * 24 * 365 * 10,
   path: "/",
 };
 
@@ -115,7 +115,6 @@ async function tryRefreshSession(
     const nextRefreshToken = await new SignJWT(claims)
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
-      .setExpirationTime("7d")
       .sign(new TextEncoder().encode(refreshSecretStr));
 
     const secure = process.env.NODE_ENV === "production";
