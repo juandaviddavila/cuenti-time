@@ -14,6 +14,7 @@ import { stringToBigint } from "@/lib/bigint";
 const searchFaceSchema = z.object({
   descriptor: z.array(z.number()).length(FACE_EMBEDDING_DIMENSIONS),
   branchId: z.coerce.bigint().positive().optional(),
+  excludeEmployeeId: z.coerce.bigint().positive().optional(),
 });
 
 interface FaceSearchRow {
@@ -72,8 +73,14 @@ export async function POST(request: NextRequest) {
   const branchWhere = parsed.data.branchId
     ? Prisma.sql`AND e."branchId" = ${parsed.data.branchId}`
     : Prisma.empty;
+  const excludeWhere = parsed.data.excludeEmployeeId
+    ? Prisma.sql`AND t."employeeId" <> ${parsed.data.excludeEmployeeId}`
+    : Prisma.empty;
   const queryVector = toPgVector(parsed.data.descriptor);
 
+  // Match por MÍNIMA distancia entre todas las plantillas del empleado:
+  // un empleado con frontal + giros matchea si CUALQUIERA de sus plantillas
+  // se acerca al query, no solo el promedio.
   const matches = await prisma.$queryRaw<FaceSearchRow[]>`
     SELECT
       e."id"::text AS "employeeId",
@@ -81,14 +88,17 @@ export async function POST(request: NextRequest) {
       p."name" AS "position",
       e."photo",
       e."branchId"::text,
-      (e."faceEmbedding" <=> ${queryVector}::vector) AS "distance"
-    FROM "Employee" e
+      MIN(t."embedding" <=> ${queryVector}::vector) AS "distance"
+    FROM "FaceTemplate" t
+    JOIN "Employee" e ON e."id" = t."employeeId"
     LEFT JOIN "Position" p ON p."id" = e."positionId"
     WHERE e."status" = 'ACTIVE'
       ${companyWhere}
       ${branchWhere}
-      AND e."faceEmbedding" IS NOT NULL
-    ORDER BY e."faceEmbedding" <=> ${queryVector}::vector
+      ${excludeWhere}
+      AND t."embedding" IS NOT NULL
+    GROUP BY e."id", e."fullName", p."name", e."photo", e."branchId"
+    ORDER BY "distance"
     LIMIT 2
   `;
 

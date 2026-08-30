@@ -10,7 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import {
-  captureEnrollmentEmbedding,
+  captureEnrollmentTemplates,
+  enrollmentStageLabel,
+  findDuplicateEnrollment,
   isModelsLoaded,
   loadModels,
   type FacePresence,
@@ -148,15 +150,34 @@ export function EmployeeFaceRegistrationDialog({
 
     const video = videoRef.current;
     setProgress(25);
-    setProgressLabel("Capturando varias muestras del rostro...");
-    const descriptor = video ? await captureEnrollmentEmbedding(video) : null;
-    if (!descriptor) {
+    setProgressLabel("Frontal 0/3");
+    const capture = video
+      ? await captureEnrollmentTemplates(video, (p) =>
+          setProgressLabel(enrollmentStageLabel(p))
+        )
+      : null;
+    if (!capture?.frontal) {
       resumeSoftRetry("Acomode el rostro en el óvalo — seguimos intentando...");
       return;
     }
 
+    setProgress(60);
+    setProgressLabel("Verificando duplicados...");
+    const duplicate = await findDuplicateEnrollment(
+      capture.frontal,
+      activeEmployee.id
+    );
+    if (duplicate) {
+      processingRef.current = false;
+      setErrorMsg(
+        `Este rostro ya está registrado como ${duplicate.fullName}. Inactive el duplicado o use su propio registro.`
+      );
+      setPhase("error");
+      return;
+    }
+
     setProgress(75);
-    setProgressLabel("Guardando plantilla biométrica...");
+    setProgressLabel("Guardando plantillas biométricas...");
     try {
       const res = await fetch(`/api/employees/${activeEmployee.id}`, {
         method: "PUT",
@@ -165,7 +186,8 @@ export function EmployeeFaceRegistrationDialog({
           faceRegistered: true,
           faceRegisteredAt: new Date().toISOString(),
           biometricConsentAt: new Date().toISOString(),
-          faceEmbedding: descriptor,
+          faceEmbedding: capture.frontal,
+          faceTemplates: capture.templates,
           ...(photo ? { photo } : {}),
         }),
       });
@@ -206,12 +228,6 @@ export function EmployeeFaceRegistrationDialog({
         if (!presence.detected) {
           stableHitsRef.current = 0;
           setScanMessage("Sin rostro a la vista. Mire de frente");
-          return;
-        }
-
-        if (!presence.fivePoints) {
-          stableHitsRef.current = 0;
-          setScanMessage("Rostro visible, no se pudo alinear. Mire de frente");
           return;
         }
 

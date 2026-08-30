@@ -38,6 +38,11 @@ const updateEmployeeSchema = z.object({
     .length(FACE_EMBEDDING_DIMENSIONS)
     .optional()
     .nullable(),
+  faceTemplates: z
+    .array(z.array(z.number()).length(FACE_EMBEDDING_DIMENSIONS))
+    .min(1)
+    .max(3)
+    .optional(),
   // Acepta BigInt o strings legacy (`face_…`); solo persiste numéricos positivos
   faceEmbeddingId: z
     .union([z.coerce.bigint().positive(), z.string(), z.null()])
@@ -199,6 +204,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       if (value !== undefined) updateData[key] = value;
     }
     delete updateData.faceEmbedding;
+    delete updateData.faceTemplates;
     updateData.hireDate = parsed.data.hireDate ? new Date(parsed.data.hireDate) : undefined;
     updateData.faceRegisteredAt = parsed.data.faceRegistered
       ? (parsed.data.faceRegisteredAt ? new Date(parsed.data.faceRegisteredAt) : new Date())
@@ -226,6 +232,25 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
           await tx.$executeRaw`UPDATE "Employee" SET "faceEmbedding" = NULL WHERE "id" = ${id}`;
         } else {
           await tx.$executeRaw`UPDATE "Employee" SET "faceEmbedding" = ${toPgVector(parsed.data.faceEmbedding)}::vector WHERE "id" = ${id}`;
+        }
+      }
+
+      // Reemplaza plantillas en cada (re)enrolamiento: el match usa la mínima
+      // distancia entre ellas. Sin faceTemplates, mantiene compatibilidad con
+      // el flujo legacy de un solo vector.
+      if (parsed.data.faceTemplates !== undefined) {
+        await tx.$executeRaw`DELETE FROM "FaceTemplate" WHERE "employeeId" = ${id}`;
+        const labels = ["frontal", "left", "right"];
+        for (let i = 0; i < parsed.data.faceTemplates.length; i++) {
+          const vector = toPgVector(parsed.data.faceTemplates[i]);
+          const label = labels[i] ?? `extra-${i}`;
+          await tx.$executeRaw`INSERT INTO "FaceTemplate" ("employeeId", "label", "embedding") VALUES (${id}, ${label}, ${vector}::vector)`;
+        }
+      } else if (parsed.data.faceEmbedding !== undefined) {
+        await tx.$executeRaw`DELETE FROM "FaceTemplate" WHERE "employeeId" = ${id}`;
+        if (parsed.data.faceEmbedding !== null) {
+          const vector = toPgVector(parsed.data.faceEmbedding);
+          await tx.$executeRaw`INSERT INTO "FaceTemplate" ("employeeId", "label", "embedding") VALUES (${id}, 'frontal', ${vector}::vector)`;
         }
       }
 

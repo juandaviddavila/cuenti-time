@@ -7,11 +7,17 @@ import {
   DEFAULT_FACE_MATCH_THRESHOLD,
 } from "@/lib/face-match-threshold";
 import {
-  embedFaceFromFivePoints,
+  embedAlignedFace,
   getArcFaceBackend,
+  isArcFaceLoaded,
   loadArcFaceModel,
 } from "@/lib/ai/arcface-service";
-import { toFivePoints, type Point } from "@/lib/ai/face-align";
+import {
+  alignFaceToCanvasFromFivePoints,
+  toFivePoints,
+  type Point,
+} from "@/lib/ai/face-align";
+import { evaluateAlignedFace, type ExpectedTurn } from "@/lib/ai/face-quality";
 import type { FacePresence } from "@/lib/ai/mediapipe-face";
 
 let modelsLoaded = false;
@@ -58,11 +64,11 @@ function snapshotForDetector(
   return canvas;
 }
 
-const MIN_FACE_BOX_PX = 70;
-const MIN_IDENTITY_BOX_PX = 110;
+const MIN_FACE_BOX_PX = 60;
+const MIN_IDENTITY_BOX_PX = 90;
 /** Dos embeddings seguidos más cerca que esto = cara ya quieta. */
 const STABLE_PAIR_DISTANCE = 0.2;
-const MIN_IDENTITY_AREA_RATIO = 0.07;
+const MIN_IDENTITY_AREA_RATIO = 0.03;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -97,7 +103,7 @@ function faceQualityScore(
 
 async function detectWithFaceApi(
   input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement,
-  options?: { minScore?: number; minBoxPx?: number }
+  options?: { minScore?: number; minBoxPx?: number; withLandmarks?: boolean }
 ): Promise<FacePresence> {
   if (!faceApiLoaded) {
     return { detected: false, box: null, fivePoints: null };
@@ -105,13 +111,16 @@ async function detectWithFaceApi(
 
   const minScore = options?.minScore ?? 0.35;
   const minBoxPx = options?.minBoxPx ?? MIN_FACE_BOX_PX;
+  const withLandmarks = options?.withLandmarks ?? true;
   const detectorOptions = new faceapi.TinyFaceDetectorOptions({
     inputSize: 416,
     scoreThreshold: minScore,
   });
-  const result = await faceapi
-    .detectSingleFace(snapshotForDetector(input), detectorOptions)
-    .withFaceLandmarks();
+  const detector = faceapi.detectSingleFace(
+    snapshotForDetector(input),
+    detectorOptions
+  );
+  const result = withLandmarks ? await detector.withFaceLandmarks() : await detector;
 
   if (!result) {
     return { detected: false, box: null, fivePoints: null };
@@ -125,8 +134,10 @@ async function detectWithFaceApi(
     return { detected: false, box: null, fivePoints: null };
   }
 
-  const fivePoints = toFivePoints(result.landmarks.positions);
-  if (!fivePoints) {
+  const fivePoints = withLandmarks
+    ? toFivePoints(result.landmarks.positions)
+    : null;
+  if (withLandmarks && !fivePoints) {
     return { detected: false, box: null, fivePoints: null };
   }
   return {
@@ -149,8 +160,11 @@ export async function loadModels(): Promise<void> {
   if (modelsLoaded) return;
   if (loadingPromise) return loadingPromise;
 
+  // Solo el detector es crítico: si ArcFace WASM falla (tablet débil, WASM
+  // roto), el embedding cae al servidor vía /api/face/embed (Fase 2).
   loadingPromise = (async () => {
-    await Promise.all([loadFaceApiDetector(), loadArcFaceModel()]);
+    await loadFaceApiDetector();
+    void loadArcFaceModel().catch(() => undefined);
     modelsLoaded = true;
   })();
 
@@ -173,13 +187,31 @@ export interface FaceDetectionResult {
   descriptor: number[] | null;
   box: { x: number; y: number; width: number; height: number } | null;
   fivePoints: Point[] | null;
+  /** Canvas 112x112 alineado del MISMO fotograma del descriptor (para gates de calidad). */
+  alignedCanvas: HTMLCanvasElement | null;
 }
 
 export async function detectFacePresence(
   input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement
 ): Promise<FacePresence> {
   if (!modelsLoaded) await loadModels();
-  return detectWithFaceApi(input);
+  // Presencia = solo detección (sin 68 landmarks): más barato para el loop de
+  // 200-300ms. Los landmarks se calculan recién al identificar/enrolar.
+  return detectWithFaceApi(input, { withLandmarks: false });
+}
+
+/** Embebe un crop ya alineado: local (WASM) o servidor (Fase 2) si falla. */
+async function embedFromAligned(
+  aligned: HTMLCanvasElement
+): Promise<number[] | null> {
+  if (isArcFaceLoaded()) {
+    try {
+      return await embedAlignedFace(aligned);
+    } catch {
+      // cae al fallback de servidor
+    }
+  }
+  return embedViaServer(aligned);
 }
 
 export async function embedDetectedFace(
@@ -188,8 +220,38 @@ export async function embedDetectedFace(
 ): Promise<number[] | null> {
   if (!fivePoints) return null;
   if (!modelsLoaded) await loadModels();
+
+  const aligned = alignFaceToCanvasFromFivePoints(input, fivePoints);
+  if (!aligned) return null;
+  return embedFromAligned(aligned);
+}
+
+/** Fallback Fase 2: el servidor corre ArcFace con onnxruntime-node. */
+async function embedViaServer(alignedCanvas: HTMLCanvasElement): Promise<number[] | null> {
   try {
-    return await embedFaceFromFivePoints(input, fivePoints);
+    const context = alignedCanvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return null;
+    const { width, height } = alignedCanvas;
+    const { data } = context.getImageData(0, 0, width, height);
+
+    const bytes = new Uint8Array(data.buffer, data.byteOffset, data.length);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(
+        null,
+        Array.from(bytes.subarray(i, i + 0x8000))
+      );
+    }
+
+    const response = await fetch("/api/face/embed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cropBase64: btoa(binary), width, height }),
+    });
+    if (!response.ok) return null;
+    const parsed = (await response.json()) as { descriptor?: number[] };
+    if (!Array.isArray(parsed.descriptor)) return null;
+    return parsed.descriptor;
   } catch {
     return null;
   }
@@ -200,24 +262,35 @@ export async function detectFace(
 ): Promise<FaceDetectionResult> {
   if (!modelsLoaded) await loadModels();
 
-  // Un solo fotograma: detectar y embeber sobre el mismo canvas.
+  // Un solo fotograma: detectar, alinear y embeber sobre el mismo canvas.
   // Si se detecta el video y se embebe 200 ms después, la distancia salta
   // de ~0.4 (match) a ~0.55 (no_match) con la misma persona.
   const frame = snapshotForDetector(input);
   const presence = await detectWithFaceApi(frame, {
-    minScore: 0.5,
+    minScore: 0.45,
     minBoxPx: MIN_IDENTITY_BOX_PX,
   });
   if (!presence.detected) {
-    return { detected: false, descriptor: null, box: null, fivePoints: null };
+    return {
+      detected: false,
+      descriptor: null,
+      box: null,
+      fivePoints: presence.fivePoints,
+      alignedCanvas: null,
+    };
   }
 
-  const descriptor = await embedDetectedFace(frame, presence.fivePoints);
+  const alignedCanvas = presence.fivePoints
+    ? alignFaceToCanvasFromFivePoints(frame, presence.fivePoints)
+    : null;
+  const descriptor = alignedCanvas ? await embedFromAligned(alignedCanvas) : null;
+
   return {
     detected: true,
     descriptor,
     box: presence.box,
     fivePoints: presence.fivePoints,
+    alignedCanvas,
   };
 }
 
@@ -291,7 +364,13 @@ export async function detectFaceConsensus(
   }
 
   if (ranked.length === 0) {
-    return { detected: false, descriptor: null, box: null, fivePoints: null };
+    return {
+      detected: false,
+      descriptor: null,
+      box: null,
+      fivePoints: null,
+      alignedCanvas: null,
+    };
   }
 
   ranked.sort((a, b) => b.score - a.score);
@@ -317,36 +396,115 @@ export function cosineDistance(a: number[], b: number[]): number {
 }
 
 /**
- * Embedding de ENROLAMIENTO: promedia varias capturas estables en vez de una
- * sola. Un template por persona es frágil ante luz/ángulo; el promedio de 3
- * muestras consistentes baja la distancia intra-persona de forma notable.
- * Descarta muestras que se alejen de las ya capturadas (parpadeos, otra cara).
+ * Embedding de ENROLAMIENTO por etapas: frontal (3 muestras) + giro izquierda
+ * y derecha (2 c/u, se omiten si no logra el giro). Cada muestra pasa gates de
+ * calidad (nitidez, luz, pose) y se descartan outliers. Devuelve una plantilla
+ * por etapa: el match por mínima distancia gana robustez ante luz/ángulo.
  */
-export async function captureEnrollmentEmbedding(
+export interface EnrollmentProgress {
+  stage: "frontal" | "left" | "right";
+  samples: number;
+  target: number;
+  issue?: string;
+}
+
+export interface EnrollmentCaptureResult {
+  templates: number[][];
+  frontal: number[] | null;
+}
+
+const ENROLL_OUTLIER_DISTANCE = 0.35;
+
+async function collectStage(
   input: HTMLVideoElement,
-  options?: { samples?: number; maxMs?: number }
+  stage: EnrollmentProgress["stage"],
+  target: number,
+  maxMs: number,
+  onProgress?: (progress: EnrollmentProgress) => void
 ): Promise<number[] | null> {
-  const targetSamples = options?.samples ?? 3;
-  const maxMs = options?.maxMs ?? 4500;
+  const expectTurn: ExpectedTurn = stage === "frontal" ? null : stage;
   const started = Date.now();
   const vectors: number[][] = [];
+  let lastIssue: string | undefined;
 
-  while (vectors.length < targetSamples && Date.now() - started < maxMs) {
-    const result = await detectFaceConsensus(input);
+  while (vectors.length < target && Date.now() - started < maxMs) {
+    const result = await detectFace(input);
     const descriptor = result.descriptor;
+    const aligned = result.alignedCanvas;
 
-    if (descriptor) {
-      const isOutlier = vectors.some(
-        (captured) => cosineDistance(captured, descriptor) > 0.35
-      );
-      if (!isOutlier) vectors.push(descriptor);
+    if (descriptor && aligned && result.fivePoints) {
+      const quality = evaluateAlignedFace(aligned, result.fivePoints, expectTurn);
+      if (quality.ok) {
+        const isOutlier = vectors.some(
+          (captured) => cosineDistance(captured, descriptor) > ENROLL_OUTLIER_DISTANCE
+        );
+        if (!isOutlier) {
+          vectors.push(descriptor);
+          lastIssue = undefined;
+        } else {
+          lastIssue = "Mantenga la misma posición";
+        }
+      } else {
+        lastIssue = quality.issues[0];
+      }
+    } else {
+      lastIssue = "Acerque la cara y mire de frente";
     }
 
-    if (vectors.length < targetSamples) await wait(120);
+    onProgress?.({ stage, samples: vectors.length, target, issue: lastIssue });
+    if (vectors.length < target) await wait(120);
   }
 
   if (vectors.length === 0) return null;
   return averageFaceEmbeddings(vectors);
+}
+
+export async function captureEnrollmentTemplates(
+  input: HTMLVideoElement,
+  onProgress?: (progress: EnrollmentProgress) => void
+): Promise<EnrollmentCaptureResult> {
+  const frontal = await collectStage(input, "frontal", 3, 6000, onProgress);
+  const templates: number[][] = frontal ? [frontal] : [];
+
+  if (frontal) {
+    const left = await collectStage(input, "left", 2, 3500, onProgress);
+    if (left) templates.push(left);
+    const right = await collectStage(input, "right", 2, 3500, onProgress);
+    if (right) templates.push(right);
+  }
+
+  return { templates, frontal };
+}
+
+export function enrollmentStageLabel(progress: EnrollmentProgress): string {
+  const stageText =
+    progress.stage === "frontal"
+      ? `Frontal ${progress.samples}/${progress.target}`
+      : progress.stage === "left"
+        ? `Giro a su izquierda ${progress.samples}/${progress.target}`
+        : `Giro a su derecha ${progress.samples}/${progress.target}`;
+  return progress.issue ? `${stageText} — ${progress.issue}` : stageText;
+}
+
+/** Anti-duplicados: ¿este rostro ya pertenece a OTRO empleado? */
+export async function findDuplicateEnrollment(
+  descriptor: number[],
+  excludeEmployeeId: string
+): Promise<{ employeeId: string; fullName: string } | null> {
+  try {
+    const response = await fetch("/api/face/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ descriptor, excludeEmployeeId }),
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as {
+      match?: { employeeId: string; fullName: string } | null;
+    };
+    return data.match ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export interface MatchResult {

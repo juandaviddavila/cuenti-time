@@ -16,7 +16,9 @@ import { cn, getInitials, sleep } from "@/lib/utils";
 import {
   loadModels,
   detectFaceConsensus,
-  captureEnrollmentEmbedding,
+  captureEnrollmentTemplates,
+  enrollmentStageLabel,
+  findDuplicateEnrollment,
   findBestMatch,
   isConfidentMatch,
   isModelsLoaded,
@@ -135,7 +137,7 @@ function FacialRegistrationContent() {
   const [progressLabel, setProgressLabel] = useState("");
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [errorMsg, setErrorMsg]           = useState("");
-  const [registeredFaceCount, setRegisteredFaceCount] = useState(0);
+  const [registeredFaceCount, setRegisteredFaceCount] = useState<number | null>(null);
   const [scanMessage, setScanMessage] = useState("Inicializando reconocimiento...");
   const [attendanceType, setAttendanceType] = useState<AttendanceMarkType | null>(null);
   const [resetCountdown, setResetCountdown] = useState(0);
@@ -420,6 +422,8 @@ function FacialRegistrationContent() {
     const branch = branchesRef.current.find((b) => b.id === activeEmployee.branchId);
     const windowMinutes = branch?.duplicateWindowMinutes ?? 10;
 
+    // GPS en paralelo con la última marcación: no sumar su latencia al flujo.
+    const locationPromise = getBrowserLocationIfMobile();
     const lastRecord = await fetchLastAttendanceRecord(activeEmployee.id);
     const decision = decideAttendanceMarkType(lastRecord, windowMinutes);
 
@@ -427,7 +431,7 @@ function FacialRegistrationContent() {
       throw new Error(decision.error);
     }
 
-    const location = await getBrowserLocationIfMobile();
+    const location = await locationPromise;
     const deviceClass = getClientDeviceClass();
 
     const res = await fetch("/api/attendance", {
@@ -486,20 +490,45 @@ function FacialRegistrationContent() {
     const isAttendancePath = automaticMode && !employeeId;
     setProgress(25);
     setProgressLabel(
-      isAttendancePath
-        ? "Extrayendo descriptor facial..."
-        : "Capturando varias muestras del rostro..."
+      isAttendancePath ? "Extrayendo descriptor facial..." : "Frontal 0/3"
     );
+
     // En marcación el descriptor solo confirma que hay cara: una muestra basta.
-    // En enrolamiento se promedian varias para un template más robusto.
-    const descriptor = video
-      ? isAttendancePath
-        ? (await detectFaceConsensus(video)).descriptor
-        : await captureEnrollmentEmbedding(video)
-      : null;
+    // En enrolamiento se capturan plantillas frontal + giros con gates de calidad.
+    let descriptor: number[] | null = null;
+    let templates: number[][] | null = null;
+    if (video) {
+      if (isAttendancePath) {
+        descriptor = (await detectFaceConsensus(video)).descriptor;
+      } else {
+        const capture = await captureEnrollmentTemplates(video, (p) =>
+          setProgressLabel(enrollmentStageLabel(p))
+        );
+        descriptor = capture.frontal;
+        templates = capture.templates;
+      }
+    }
     if (!descriptor) {
       resumeSoftRetry("Acomode el rostro en el óvalo — seguimos intentando...");
       return;
+    }
+
+    if (!isAttendancePath) {
+      setProgress(60);
+      setProgressLabel("Verificando duplicados...");
+      const duplicate = await findDuplicateEnrollment(
+        descriptor,
+        activeEmployee.id
+      );
+      if (duplicate) {
+        processingRef.current = false;
+        stopCamera();
+        setErrorMsg(
+          `Este rostro ya está registrado como ${duplicate.fullName}. Inactive el duplicado o use su propio registro.`
+        );
+        setPhase("error");
+        return;
+      }
     }
 
     if (automaticMode && !employeeId) {
@@ -527,7 +556,7 @@ function FacialRegistrationContent() {
 
     // Step 3: Save embedding + photo to DB
     setProgress(75);
-    setProgressLabel("Guardando plantilla biométrica...");
+    setProgressLabel("Guardando plantillas biométricas...");
     try {
       const res = await fetch(`/api/employees/${activeEmployee.id}`, {
         method: "PUT",
@@ -537,6 +566,7 @@ function FacialRegistrationContent() {
           faceRegisteredAt: new Date().toISOString(),
           biometricConsentAt: new Date().toISOString(),
           faceEmbedding: descriptor,
+          ...(templates ? { faceTemplates: templates } : {}),
           ...(photo ? { photo } : {}),
         }),
       });
@@ -702,9 +732,11 @@ function FacialRegistrationContent() {
             <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/70 to-transparent">
               <p className="text-white/70 text-xs text-center">
                 {automaticMode
-                  ? registeredFaceCount > 0
-                    ? `Modo automático • ${registeredFaceCount} rostro${registeredFaceCount === 1 ? "" : "s"} entrenado${registeredFaceCount === 1 ? "" : "s"}`
-                    : "Modo automático • sin rostros entrenados para comparar"
+                  ? registeredFaceCount == null
+                    ? "Modo automático • cargando rostros registrados..."
+                    : registeredFaceCount > 0
+                      ? `Modo automático • ${registeredFaceCount} rostro${registeredFaceCount === 1 ? "" : "s"} entrenado${registeredFaceCount === 1 ? "" : "s"}`
+                      : "Modo automático • sin rostros entrenados para comparar"
                   : "Coloque su rostro en el óvalo • Mantenga la posición unos segundos"}
               </p>
             </div>

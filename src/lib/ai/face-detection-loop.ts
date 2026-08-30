@@ -7,8 +7,8 @@ import {
 
 /** Frames con cara antes de pedir identidad / capturar. */
 export const FACE_STABLE_HITS = 2;
-/** Mínimo entre ticks de presencia (MediaPipe es barato; no hace falta 1 s). */
-export const FACE_PRESENCE_MIN_INTERVAL_MS = 200;
+/** Mínimo entre ticks de presencia (solo detección, sin landmarks: barato). */
+export const FACE_PRESENCE_MIN_INTERVAL_MS = 300;
 export const FACE_SOFT_RETRY_COOLDOWN_MS = 900;
 
 export function startFacePresenceLoop(options: {

@@ -8,6 +8,10 @@ const MCP_UPSTREAM = (
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    // Binario nativo de ArcFace server-side: fuera del bundle de webpack.
+    serverComponentsExternalPackages: ["onnxruntime-node"],
+  },
   env: {
     NEXT_PUBLIC_GOOGLE_MAPS_API_KEY:
       process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? process.env.GOOGLE_MAPS_API_KEY ?? "",

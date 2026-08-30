@@ -8,6 +8,7 @@ allowBuilds:
   '@scarf/scarf': true
   core-js: true
   esbuild: false
+  onnxruntime-node: true
   prisma: true
   protobufjs: true
   unrs-resolver: true

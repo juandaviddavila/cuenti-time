@@ -149,6 +149,7 @@ AuditLog (registra todos los cambios)
 - Schema en: `prisma/schema.prisma`
 - Seed en: `prisma/seed.ts`
 - Embeddings faciales: `Employee.faceEmbedding Unsupported("vector(512)")` con índice `ivfflat` y `vector_cosine_ops`; crear extensión/índice con `prisma/pgvector.sql`. Prisma **no** diffea columnas `Unsupported`: cambios de tipo van en SQL explícito
+- Multi-template facial: `FaceTemplate` (1-N por empleado, `embedding vector(512)`, label frontal/left/right). `/api/face/search` matchea por MÍNIMA distancia entre plantillas. Backfill desde `faceEmbedding` en `prisma/backfill-face-templates.sql`. El enrolamiento captura frontal (3 muestras) + giros izq/der (2 c/u) con gates de calidad (`src/lib/ai/face-quality.ts`: nitidez Laplaciano, luminancia, roll/yaw) y anti-duplicados (`findDuplicateEnrollment` con `excludeEmployeeId`).
 - `Plan` y `PlanType` fueron eliminados. El modelo SaaS actual usa `Company.plan` (`free`/`paid`), `Company.subscriptionStatus`, `Company.subscriptionExpiresAt`, `Company.maxEmployees` y los modelos de facturación `BillingConfig` + `BillingInvoice` (integración **Cuenti Pay**). Wompi quedó deprecado.
 - `Company.maxEmployees` limita únicamente nuevos registros faciales, no la creación de empleados básicos.
 - `BillingConfig`: precios y credenciales Cuenti Pay leídos desde DB (`freeEmployeeLimit`, `priceCopPerEmployeeMonthly`, `priceUsdPerEmployeeMonthly`, `tipoDocumento`, `idProductoCop`, etc.). Nunca quemar precios/límites en UI.
@@ -170,7 +171,9 @@ src/lib/ai/
 ├── face-detection-loop.ts   # rAF con candado; presencia cada ~200ms
 ├── face-api-service.ts      # Presencia TinyFace; detectFace / detectFaceConsensus (mismo frame)
 ├── face-align.ts            # 5 puntos (MediaPipe o 68 legacy) → similitud → canvas 112x112
+├── face-quality.ts          # Gates de enrolamiento: nitidez, luminancia, roll/yaw
 ├── arcface-service.ts       # onnxruntime-web: w600k_mbf.onnx → embedding 512-D
+├── arcface-server.ts        # onnxruntime-node: mismo modelo en servidor (Fase 2)
 ├── pgvector.ts              # Serialización del vector (FACE_EMBEDDING_DIMENSIONS = 512)
 ├── openrouter-liveness.ts   # Anti-spoofing (servidor)
 └── openrouter-service.ts    # Cliente de liveness (timeout 4s)
@@ -180,6 +183,10 @@ src/lib/ai/
 `detectFaceConsensus` (espera 2 embeddings seguidos parecidos; no promedia frames movidos) →
 alineación 112×112 → ArcFace 512-D → `POST /api/face/search` (pgvector `<=>`).
 MediaPipe no bloquea la carga. No correr ArcFace en cada tick.
+**Embed dual (Fase 2):** `embedDetectedFace` prefiere ArcFace WASM local; si no está
+disponible o falla, envía el crop 112×112 (RGBA base64) a `POST /api/face/embed` y el
+servidor corre `onnxruntime-node`. `loadModels()` solo exige el detector; ArcFace local
+carga en background.
 
 - **Solo identidad facial.** ArcFace responde *quién es*; no sirve para comparar prendas
   ni cuerpo entero. Se entrena para que la misma persona quede cerca *aunque cambie de
@@ -300,6 +307,7 @@ src/app/api/
 ├── face/
 │   ├── descriptors/route.ts
 │   ├── search/route.ts        # Búsqueda por similitud coseno (pgvector `<=>`)
+│   ├── embed/route.ts         # ArcFace server-side (onnxruntime-node, Fase 2)
 │   ├── backfill-candidates/route.ts  # Empleados con foto y sin embedding 512-D
 │   └── liveness/route.ts      # Anti-spoofing vía OpenRouter
 └── v1/                        # API pública con Bearer tokens
@@ -332,6 +340,7 @@ src/app/api/
 - `@ducanh2912/next-pwa` v10 — usar en vez de `next-pwa` (mejor compatibilidad con Next.js 14)
 - Prisma 5.22 con PostgreSQL; `pgvector` se maneja con `Unsupported("vector(128)")` y SQL crudo para leer/escribir/buscar embeddings
 - `onnxruntime-web` — inferencia de ArcFace (512-D) en el navegador; binarios WASM servidos desde `public/ort/`
+- `onnxruntime-node` — inferencia de ArcFace en el servidor (`/api/face/embed`, Fase 2); declarado en `experimental.serverComponentsExternalPackages`
 - `xlsx` — exportación a Excel en cliente
 - `jspdf` + `jspdf-autotable` — exportación a PDF en cliente
 - `react-day-picker` v8 — calendario usado por el componente `Calendar` de shadcn/ui
@@ -517,11 +526,14 @@ src/app/api/
 - Tras cambiar `schema.prisma`: `pnpm db:generate && pnpm db:push` y **reiniciar** el proceso `next` (el client no hot-reloadea).
 - El reset de BigInt ya fue ejecutado en desarrollo y eliminó los datos anteriores; requiere `db:seed` para restaurar las credenciales de prueba.
 
-*Última actualización: 2026-08-29. Identidad: mismo fotograma + consenso de 3
-frames (evita no_match intermitente). TinyFace detecta; ArcFace solo al
-identificar/enrolar. Search distingue empty_gallery vs distancia alta.
-ArcFace solo para identidad facial; no reutilizar embeddings/umbrales para
-prendas (`docs/clothing-checkout-alert.md`). Motor: MobileFaceNet 512-D +
-onnxruntime-web; pgvector coseno. Pendiente: licencia InsightFace comercial.*
+*Última actualización: 2026-08-29 (noche). Registro facial robusto: multi-template
+`FaceTemplate` (frontal + giros, match por mínima distancia), gates de calidad en
+enrolamiento (nitidez/luz/pose), anti-duplicados (`excludeEmployeeId`), feedback
+visual por etapas. Liveness VLM (Gemini/OpenRouter) FUERA del flujo crítico
+(100% fallos en prod, 0 éxitos; era la causa de reintentos). GPS en paralelo con
+la marcación. Fase 2: embed dual local→`/api/face/embed` (onnxruntime-node).
+Umbrales de distancia relajados (área 0.03, box 90) para detectar a ~1 m.
+ArcFace solo para identidad facial; no reutilizar para prendas
+(`docs/clothing-checkout-alert.md`). Pendiente: licencia InsightFace comercial.*
 
 *Anterior: 2026-07-20 (noche). Cuenti Pay: plan gratis (default 3 empleados) + plan pago **mensual** COP/USD por empleado, precios/límites leídos desde `BillingConfig` en DB (nunca quemados); checkout/webhook/void + landing dinámica. BigInt autoincrement + serialización de IDs; build verificado; MCP OAuth 2.1 adicional + Bearer; webhooks 1+3×10min; Integraciones Tokens|MCP|Webhooks; deps exactas; faceMatchThreshold; header sin buscador. Dev: `http://localhost:7578`, MCP `:4101`.*

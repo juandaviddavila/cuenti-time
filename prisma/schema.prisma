@@ -248,6 +248,7 @@ model Employee {
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   faceEmbedding      Unsupported("vector(512)")?
+  faceTemplates      FaceTemplate[]
   attendances        AttendanceRecord[]
   branch             Branch              @relation(fields: [branchId], references: [id])
   company            Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -262,6 +263,17 @@ model Employee {
   @@index([status])
   @@index([faceRegistered])
   @@index([positionId])
+}
+
+model FaceTemplate {
+  id         BigInt   @id @default(autoincrement())
+  employeeId BigInt
+  label      String?
+  createdAt  DateTime @default(now())
+  embedding  Unsupported("vector(512)")?
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
 }
 
 model AttendanceRecord {
