@@ -307,6 +307,44 @@ export async function detectFace(
   };
 }
 
+/**
+ * Detecta y alinea SIN calcular embedding. Para el enrolamiento: los gates de
+ * calidad corren sobre el canvas alineado y el embedding (caro) se calcula
+ * solo si pasan. Mantiene la garantía "mismo frame": alinea una sola vez.
+ */
+export async function detectAndAlignFace(
+  input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement
+): Promise<FaceDetectionResult> {
+  if (!modelsLoaded) await loadModels();
+
+  const frame = snapshotForDetector(input);
+  const presence = await detectWithFaceApi(frame, {
+    minScore: 0.45,
+    minBoxPx: MIN_IDENTITY_BOX_PX,
+  });
+  if (!presence.detected) {
+    return {
+      detected: false,
+      descriptor: null,
+      box: null,
+      fivePoints: presence.fivePoints,
+      alignedCanvas: null,
+    };
+  }
+
+  const alignedCanvas = presence.fivePoints
+    ? alignFaceToCanvasFromFivePoints(frame, presence.fivePoints)
+    : null;
+
+  return {
+    detected: true,
+    descriptor: null,
+    box: presence.box,
+    fivePoints: presence.fivePoints,
+    alignedCanvas,
+  };
+}
+
 /** Promedia vectores ya L2-normalizados y vuelve a normalizar. */
 export function averageFaceEmbeddings(vectors: number[][]): number[] | null {
   if (vectors.length === 0) return null;
@@ -441,27 +479,35 @@ async function collectStage(
   let lastIssue: string | undefined;
 
   while (vectors.length < target && Date.now() - started < maxMs) {
-    const result = await detectFace(input);
-    const descriptor = result.descriptor;
+    // Gate antes que embed: detectar+alinear+gates son baratos; el embedding
+    // ArcFace (caro) solo se calcula si el frame pasa los gates.
+    const result = await detectAndAlignFace(input);
     const aligned = result.alignedCanvas;
 
-    if (descriptor && aligned && result.fivePoints) {
-      const quality = evaluateAlignedFace(aligned, result.fivePoints, expectTurn);
-      if (quality.ok) {
-        const isOutlier = vectors.some(
-          (captured) => cosineDistance(captured, descriptor) > ENROLL_OUTLIER_DISTANCE
-        );
-        if (!isOutlier) {
-          vectors.push(descriptor);
-          lastIssue = undefined;
-        } else {
-          lastIssue = "Mantenga la misma posición";
-        }
-      } else {
-        lastIssue = quality.issues[0];
-      }
-    } else {
+    if (!result.detected || !aligned || !result.fivePoints) {
       lastIssue = "Acerque la cara y mire de frente";
+    } else {
+      const quality = evaluateAlignedFace(aligned, result.fivePoints, expectTurn);
+      if (!quality.ok) {
+        lastIssue = quality.issues[0];
+      } else {
+        const descriptor = await embedFromAligned(aligned);
+        if (!descriptor) {
+          // Gates OK pero el embedding falló (WASM y servidor): reintento.
+          lastIssue = "Procesando rostro — un momento";
+        } else {
+          const isOutlier = vectors.some(
+            (captured) =>
+              cosineDistance(captured, descriptor) > ENROLL_OUTLIER_DISTANCE
+          );
+          if (!isOutlier) {
+            vectors.push(descriptor);
+            lastIssue = undefined;
+          } else {
+            lastIssue = "Mantenga la misma posición";
+          }
+        }
+      }
     }
 
     onProgress?.({ stage, samples: vectors.length, target, issue: lastIssue });
