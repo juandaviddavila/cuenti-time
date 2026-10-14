@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "chunks": [
     {
       "id": "5438c57a",
@@ -128,6 +128,14 @@
       "sessions": 1,
       "memories": 25,
       "prompts": 34
+    },
+    {
+      "id": "ea6fb24c",
+      "created_by": "juandaviddavila",
+      "created_at": "2026-10-14T00:14:57.982938248Z",
+      "sessions": 3,
+      "memories": 17,
+      "prompts": 2
     }
   ]
 }
