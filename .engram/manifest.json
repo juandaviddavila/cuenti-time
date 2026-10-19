@@ -136,6 +136,14 @@
       "sessions": 3,
       "memories": 17,
       "prompts": 2
+    },
+    {
+      "id": "d0035dec",
+      "created_by": "juandaviddavila",
+      "created_at": "2026-10-19T19:03:42.5547738Z",
+      "sessions": 1,
+      "memories": 1,
+      "prompts": 0
     }
   ]
 }
