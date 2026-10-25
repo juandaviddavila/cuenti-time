@@ -351,12 +351,12 @@ src/app/api/
 - El middleware usa `jose` (edge-compatible), las API routes usan `jsonwebtoken`
 - En middleware y `server-auth`, preferir imports subpath de `jose` (`jose/jwt/sign`, `jose/jwt/verify`) para no arrastrar módulos JWE incompatibles con Edge.
 - shadcn/ui instalado con `npx shadcn@latest add <component>` (no `shadcn-ui`)
-- PostgreSQL local actual: `DATABASE_URL="postgresql://root:1234@localhost:5432/cuenti_time"`
+- PostgreSQL local actual: `DATABASE_URL="postgresql://<user>:<password>@localhost:5432/cuenti_time"`
 
 ## Credenciales de seed (DB cuenti_time)
-- Super Admin: `superadmin@cuenti.com` / `Admin2024!`
-- Admin Empresa 1 (Distribuidora Andina): `admin.distribuidora@cuenti.com` / `Admin2024!`
-- Admin Empresa 2 (Textiles del Norte): `admin.textiles@cuenti.com` / `Admin2024!`
+- Super Admin: `<email>` / `Admin2024!`
+- Admin Empresa 1 (Distribuidora Andina): `<email>` / `Admin2024!`
+- Admin Empresa 2 (Textiles del Norte): `<email>` / `Admin2024!`
 
 ## Seguridad — patrones obligatorios
 

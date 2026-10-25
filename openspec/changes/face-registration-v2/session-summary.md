@@ -18,7 +18,7 @@ Registro/reconocimiento facial estabilizado de punta a punta y desplegado a prod
 - Umbrales de distancia relajados, GPS paralelo, gate antes que embed.
 
 ## Deploy
-pack-deploy → scp (pem chatti.chat.pem) → server-update.sh en 32.186.145.119.
+pack-deploy → scp (pem <ssh-key>) → server-update.sh en <server-ip>.
 Verificado: face/embed 401, face/search 401, MCP /health 200, /login 200.
 
 ## Pendiente

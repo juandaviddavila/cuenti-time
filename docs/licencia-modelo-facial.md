@@ -22,7 +22,7 @@ técnicamente pero está entrenado sobre MS1M-RefineV2, la misma procedencia cue
 
 ## Correo a enviar
 
-**Para:** `recognition-oss-pack@insightface.ai`
+**Para:** `<email>`
 **Asunto:** Commercial license request — buffalo_s (w600k_mbf) for browser-based attendance SaaS
 
 ```text

@@ -75,7 +75,7 @@ curl -v -X POST "$CUENTI_PAY_API_URL" \
     "id_cliente": -1,
     "nombre_cliente": "Cliente Prueba",
     "identificacion": "900123456",
-    "telefono1": "3001234567",
+    "telefono1": "<phone>",
     "telefono2": "",
     "email1": "",
     "direccion": "N/A",

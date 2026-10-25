@@ -61,8 +61,8 @@ POST /api/auth/login/resend { phoneE164, channel: "whatsapp" }
 ```
 cd cuenti-time   # cwd absoluto; el workspace mixto a veces queda en sing-cuenti
 bash scripts/pack-deploy.sh
-scp -i laboratorios_ip/tem/chatti.chat.pem deploy.tar.gz \
-  ubuntu@32.186.145.119:/home/ubuntu/app/cuenti-time_compilado/deploy.tar.gz
+scp -i <ssh-key> deploy.tar.gz \
+  ubuntu@<server-ip>:/home/ubuntu/app/cuenti-time_compilado/deploy.tar.gz
 ssh … 'cd /home/ubuntu/app/cuenti-time_compilado && bash scripts/server-update.sh'
 # WHATSAPP_* viven solo en .env del server (no van en el tar)
 ```
