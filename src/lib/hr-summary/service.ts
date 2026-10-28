@@ -114,7 +114,11 @@ interface CompanyScope {
   name: string;
 }
 
-/** FNV-1a 64-bit: clave de advisory lock estable para (empresa, tipo, ancla). */
+/**
+ * FNV-1a 64-bit normalizado con signo: clave estable para (empresa, tipo,
+ * ancla), siempre dentro del rango int8 de PostgreSQL (−2^63 … 2^63−1) para
+ * que pg_advisory_xact_lock($1::int8) la acepte.
+ */
 export function advisoryLockKey(input: string): bigint {
   let hash = 0xcbf29ce484222325n;
   const prime = 0x100000001b3n;
@@ -123,7 +127,7 @@ export function advisoryLockKey(input: string): bigint {
     hash ^= BigInt(input.charCodeAt(i));
     hash = (hash * prime) & mask;
   }
-  return hash;
+  return BigInt.asIntN(64, hash);
 }
 
 type DeliveryOutcome =
@@ -135,12 +139,14 @@ type DeliveryOutcome =
  * Entrega idempotente del resumen ejecutivo por email.
  *
  * Garantía de envío único: el re-chequeo de "ya enviado", el envío y la
- * escritura del ledger ocurren DENTRO de una transacción serializable que
+ * escritura del ledger ocurren DENTRO de una transacción ReadCommitted que
  * primero toma un advisory lock de PostgreSQL (pg_advisory_xact_lock) con
- * clave derivada de (empresa, tipo, ancla). Así, dos procesos concurrentes
- * sobre el mismo período se serializan: el segundo ve el ledger de éxito y
- * omite el envío. El resumen se carga ANTES de tomar el lock para minimizar
- * su duración.
+ * clave derivada de (empresa, tipo, ancla). ReadCommitted es decisivo: cada
+ * sentencia ve un snapshot fresco, así que tras esperar el lock el re-chequeo
+ * SÍ ve el commit del ganador (Serializable tomaría el snapshot antes de la
+ * espera y vería datos obsoletos). Dos procesos concurrentes se serializan:
+ * el segundo ve el ledger de éxito y omite el envío. El resumen se carga
+ * ANTES de tomar el lock para minimizar su duración.
  *
  * Deduplicación: LateReportLog con success=true en la fecha-ancla exacta del
  * período (medianoche para diario, mediodía del lunes para semanal). Un
@@ -217,82 +223,68 @@ export async function deliverExecutiveSummary(
     `hr-summary:${company.id.toString()}:${kind}:${period.anchor.getTime()}`
   );
 
-  let outcome: DeliveryOutcome;
-  try {
-    outcome = await deps.db.$transaction(
-      async (tx) => {
-        // Serializa procesos concurrentes sobre el mismo (empresa, tipo, ancla).
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
+  // ReadCommitted: el re-chequeo tras la espera del lock ve el snapshot fresco
+  // del ganador. Un error de la transacción (p.ej. P2034) se propaga: un
+  // abort no es prueba de entrega y nunca debe reportarse como already_sent.
+  const outcome: DeliveryOutcome = await deps.db.$transaction(
+    async (tx) => {
+      // Serializa procesos concurrentes sobre el mismo (empresa, tipo, ancla).
+      // La función retorna void; la subconsulta devuelve un int normal que
+      // Prisma sí puede deserializar, con cast explícito a int8 del bigint.
+      await tx.$queryRaw`SELECT 1 AS acquired FROM (SELECT pg_advisory_xact_lock(${lockKey}::int8)) AS lock_holder`;
 
-        const existing = await tx.lateReportLog.findFirst({
-          where: {
-            companyId: company.id,
-            date: period.anchor,
-            success: true,
-          },
-          select: { id: true },
+      const existing = await tx.lateReportLog.findFirst({
+        where: {
+          companyId: company.id,
+          date: period.anchor,
+          success: true,
+        },
+        select: { id: true },
+      });
+      if (existing) return { status: "already_sent" as const };
+
+      try {
+        const sent = await deps.sendMail({
+          to: recipients.join(", "),
+          subject,
+          html,
         });
-        if (existing) return { status: "already_sent" as const };
-
-        try {
-          const sent = await deps.sendMail({
-            to: recipients.join(", "),
-            subject,
-            html,
-          });
-          if (sent.skipped) {
-            // Adapter sin SMTP: no es éxito. Ledger de fallo (retryable).
-            await writeSummaryLedger(tx, {
-              company,
-              period,
-              summary,
-              recipients: recipients.length,
-              success: false,
-              errorMessage: "Envío omitido: SMTP no configurado",
-            });
-            return { status: "send_failed" as const };
-          }
-        } catch (err) {
-          const message = err instanceof Error ? err.message : "Error de envío";
+        if (sent.skipped) {
+          // Adapter sin SMTP: no es éxito. Ledger de fallo (retryable).
           await writeSummaryLedger(tx, {
             company,
             period,
             summary,
             recipients: recipients.length,
             success: false,
-            errorMessage: message,
+            errorMessage: "Envío omitido: SMTP no configurado",
           });
           return { status: "send_failed" as const };
         }
-
-        const logsCreated = await writeSummaryLedger(tx, {
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Error de envío";
+        await writeSummaryLedger(tx, {
           company,
           period,
           summary,
           recipients: recipients.length,
-          success: true,
+          success: false,
+          errorMessage: message,
         });
-        return { status: "sent" as const, logsCreated };
-      },
-      { isolationLevel: "Serializable" }
-    );
-  } catch (err) {
-    // Serialización fallida (P2034): otro worker envió el mismo período.
-    if (
-      typeof err === "object" &&
-      err !== null &&
-      (err as { code?: string }).code === "P2034"
-    ) {
-      return {
-        companyId: params.companyId,
-        kind,
-        skipped: true,
-        reason: "already_sent",
+        return { status: "send_failed" as const };
+      }
+
+      const logsCreated = await writeSummaryLedger(tx, {
+        company,
+        period,
+        summary,
         recipients: recipients.length,
-      };
-    }
-    throw err;
-  }
+        success: true,
+      });
+      return { status: "sent" as const, logsCreated };
+    },
+    { isolationLevel: "ReadCommitted" }
+  );
 
   if (outcome.status === "already_sent") {
     return {

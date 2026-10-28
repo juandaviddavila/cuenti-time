@@ -16,7 +16,7 @@ Delivery: `ask-on-risk` with `feature-branch-chain`; forecast 2,500–4,000 auth
 ## Tasks
 
 - **T1 — S6 — delegated (parallelism trigger with T2)** — Dynamic pricing calculator and clear pricing presentation. Status: done. Commit: `0077c2e`.
-- **T2 — S1–S2 — delegated (parallelism trigger with T1)** — Shared executive summary engine, dashboard delivery, email delivery, and MCP/report integration. Status: in progress after relaunch. Commit: pending.
+- **T2 — S1–S2 — delegated (parallelism trigger with T1)** — Shared executive summary engine, dashboard delivery, email delivery, and MCP/report integration. Status: in progress; implementation and bounded correction recheck passed locally, documentation and review closure pending. Commit: implementation in user-authored `0bfb444`; correction commit pending.
 - **T3 — S5 — inline; high-risk verification required (security/auth boundary)** — Revocable branch kiosk activation and kiosk authorization flow. Status: pending. Commit: pending.
 - **T4 — S3 — inline; high-risk verification required (persisted schedule drafts)** — Assisted schedule drafts, conflict detection, approval, and UI. Status: pending. Commit: pending.
 - **T5 — S4 — inline; high-risk verification required (new persisted HR records)** — Lightweight training/certification catalog, assignments, expiry status, reminders, and UI. Status: pending. Commit: pending.
@@ -30,3 +30,7 @@ Delivery: `ask-on-risk` with `feature-branch-chain`; forecast 2,500–4,000 auth
 - **L5 — Delivery strategy:** User answered “1”, selecting a feature-branch chain. The tracker branch is `feat/hr-intelligence-roadmap`; each work unit remains independently reviewable and no PR is created without a later user decision.
 - **L6 — T1 verification:** Pricing tests passed (8), marketing typecheck passed, root TypeScript passed, and an independent verifier returned S6/S7 verified with no blockers. The initial T2 launch was rejected by the runtime overlap guard before any T2 write.
 - **L7 — T1 delivery:** Work-unit commit `0077c2e` (`feat(pricing): add dynamic employee calculator`). Native assessment: medium risk, `reviewDue=false`, reason `under_budget`; the slice remains pending in the feature-chain review boundary.
+
+- **L8 — User commit reconciliation:** “si yo realice comit y lo llame a eso afecta en algo tu tarea”. Preserve user commit `0bfb444` unchanged; subsequent corrections use a separate Conventional Commit.
+- **L9 — T2 bounded correction:** Initial independent verification reproduced duplicate email sends and false success on skipped SMTP. After a second correction of the same concurrency blocker, ReadCommitted with a signed-int8 advisory lock passed the independent snapshot-model recheck. Seventeen focused tests pass, as does writer TypeScript checking. No live DB/SMTP was used in the correction rechecks. SMTP success followed by transaction/process failure can still cause duplicate delivery; documented rather than claimed exactly-once.
+- **L10 — T2 operational proof:** Existing DATABASE_URL and all required SMTP variables are present. Presence is not connectivity or authorization for remote use. The earlier full MCP suite failed on DB availability; only the three non-DB registry tests passed. External cron scheduling and real DB/SMTP integration remain unverified. No production deployment is authorized.

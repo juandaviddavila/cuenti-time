@@ -9,6 +9,7 @@ import { buildExecutiveSummary } from "../summary";
 import {
   deliverExecutiveSummary,
   resolveSummaryRecipients,
+  advisoryLockKey,
   type SummaryDeliveryDeps,
 } from "../service";
 import { dailySummaryPeriod, weeklySummaryPeriod } from "../period";
@@ -123,12 +124,21 @@ const sentMails: Array<{ to: string; subject: string; html: string }> = [];
 let failNextSend: Error | null = null;
 let skipNextSend = false;
 
+/** Capturas del stub para pinning de options/SQL/orden de la transacción. */
+const txEvents: string[] = [];
+let lastTxOptions: unknown;
+let lastLockSql = "";
+let lastLockKey: unknown;
+
 function makeDb() {
   const makeTx = () => ({
     lateReportLog: {
-      findFirst: async ({ where }: { where: Record<string, unknown> }) =>
-        findLog(store.logs, where),
+      findFirst: async ({ where }: { where: Record<string, unknown> }) => {
+        txEvents.push("recheck");
+        return findLog(store.logs, where);
+      },
       createMany: async ({ data }: { data: Omit<LogRow, "id">[] }) => {
+        txEvents.push("ledger");
         for (const row of data) {
           store.logs.push({ ...row, id: store.nextLogId++ });
         }
@@ -136,7 +146,16 @@ function makeDb() {
       },
     },
     // El advisory lock real serializa en Postgres; el mutex del stub modela eso.
-    $queryRaw: async () => [],
+    // Recibe la forma tagged-template de $queryRaw y captura SQL + valores.
+    $queryRaw: async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      txEvents.push("lock");
+      lastLockSql = Array.isArray(strings) ? strings.join("§") : String(strings);
+      lastLockKey = values[0];
+      return [{ acquired: 1 }];
+    },
   });
 
   return {
@@ -171,7 +190,8 @@ function makeDb() {
     // Mutex por instancia: modela la serialización del advisory lock para
     // que los tests de concurrencia sean deterministas.
     _txQueue: Promise.resolve() as Promise<unknown>,
-    $transaction(fn: (tx: unknown) => unknown) {
+    $transaction(fn: (tx: unknown) => unknown, options?: unknown) {
+      lastTxOptions = options;
       const run = () => fn(makeTx());
       const result = this._txQueue.then(run, run);
       this._txQueue = result.then(
@@ -183,10 +203,13 @@ function makeDb() {
   };
 }
 
-function makeDeps(): SummaryDeliveryDeps {
+function makeDeps(
+  overrides: Partial<Pick<SummaryDeliveryDeps, "loadSummary" | "sendMail">> = {}
+): SummaryDeliveryDeps {
   return {
     db: makeDb() as unknown as SummaryDeliveryDeps["db"],
     sendMail: async (options) => {
+      txEvents.push("send");
       if (failNextSend) {
         const err = failNextSend;
         failNextSend = null;
@@ -203,6 +226,7 @@ function makeDeps(): SummaryDeliveryDeps {
       summary: buildExecutiveSummary(seedEvaluations()),
       range: { from: params.from.toISOString(), to: params.to.toISOString() },
     }),
+    ...overrides,
   };
 }
 
@@ -233,6 +257,10 @@ beforeEach(() => {
   sentMails.length = 0;
   failNextSend = null;
   skipNextSend = false;
+  txEvents.length = 0;
+  lastTxOptions = undefined;
+  lastLockSql = "";
+  lastLockKey = undefined;
   addCompany("5", "Empresa A");
   addAdmin("5", "Admin.A2@Example.COM");
   addAdmin("5", "admin.a1@example.com");
@@ -323,6 +351,138 @@ describe("deliverExecutiveSummary — prevención de envío duplicado", () => {
     assert.equal(retry.skipped, false);
     assert.equal(retry.logsCreated, 1);
     assert.equal(sentMails.length, 1);
+  });
+});
+
+describe("deliverExecutiveSummary — correcciones del verificador", () => {
+  it("dos llamadas concurrentes producen exactamente un email y un límite de éxito", async () => {
+    const deps = makeDeps();
+    const [a, b] = await Promise.all([
+      deliverExecutiveSummary({ companyId: "5", kind: "daily", now: NOW }, deps),
+      deliverExecutiveSummary({ companyId: "5", kind: "daily", now: NOW }, deps),
+    ]);
+
+    const statuses = [a, b]
+      .map((r) => (r.skipped ? r.reason : "sent"))
+      .sort();
+    assert.deepEqual(statuses, ["already_sent", "sent"]);
+    assert.equal(sentMails.length, 1);
+    const successLogs = store.logs.filter((l) => l.companyId === 5n && l.success);
+    assert.equal(successLogs.length, 1);
+  });
+
+  it("adapter omitido ({ skipped: true }) no escribe success y el reintento real envía", async () => {
+    const deps = makeDeps();
+    skipNextSend = true;
+
+    const skipped = await deliverExecutiveSummary({ companyId: "5", kind: "daily", now: NOW }, deps);
+    assert.deepEqual(
+      { skipped: skipped.skipped, reason: skipped.reason },
+      { skipped: true, reason: "send_failed" }
+    );
+    assert.equal(sentMails.length, 0);
+    assert.equal(store.logs.filter((l) => l.companyId === 5n && l.success).length, 0);
+    const failLogs = store.logs.filter((l) => l.companyId === 5n && !l.success);
+    assert.equal(failLogs.length, 1);
+    assert.ok(failLogs[0].errorMessage?.includes("SMTP no configurado"));
+
+    // El envío real posterior sí funciona: la omisión no deduplicó.
+    const retry = await deliverExecutiveSummary({ companyId: "5", kind: "daily", now: NOW }, deps);
+    assert.equal(retry.skipped, false);
+    assert.equal(sentMails.length, 1);
+    assert.equal(store.logs.filter((l) => l.companyId === 5n && l.success).length, 1);
+  });
+
+  it("byBranch vacío no envía email y devuelve la razón explícita no_data", async () => {
+    const deps = makeDeps({
+      loadSummary: async (_session, params) => ({
+        summary: buildExecutiveSummary([]),
+        range: { from: params.from.toISOString(), to: params.to.toISOString() },
+      }),
+    });
+
+    const result = await deliverExecutiveSummary({ companyId: "5", kind: "daily", now: NOW }, deps);
+    assert.deepEqual(
+      { skipped: result.skipped, reason: result.reason },
+      { skipped: true, reason: "no_data" }
+    );
+    assert.equal(sentMails.length, 0);
+    assert.equal(store.logs.length, 0);
+
+    // Y no es "already_sent": cuando haya datos, el envío debe ocurrir.
+    const withData = makeDeps();
+    const later = await deliverExecutiveSummary({ companyId: "5", kind: "daily", now: NOW }, withData);
+    assert.equal(later.skipped, false);
+  });
+});
+
+describe("deliverExecutiveSummary — corrección B1 (lock + snapshot fresco)", () => {
+  it("la transacción usa ReadCommitted y el lock SQL ocurre antes del re-chequeo y envío", async () => {
+    const deps = makeDeps();
+    const result = await deliverExecutiveSummary({ companyId: "5", kind: "daily", now: NOW }, deps);
+    assert.equal(result.skipped, false);
+
+    // Aislamiento: ReadCommitted da snapshot de sentencia fresco tras la espera del lock
+    // (Serializable tomaría el snapshot antes de la espera y vería un ledger obsoleto).
+    assert.deepEqual(lastTxOptions, { isolationLevel: "ReadCommitted" });
+
+    // SQL de advisory lock con cast int8 y forma deserializable (sin columna void).
+    assert.ok(lastLockSql.includes("pg_advisory_xact_lock("), `SQL capturado: ${lastLockSql}`);
+    assert.ok(lastLockSql.includes("::int8"), `SQL capturado: ${lastLockSql}`);
+    assert.ok(!/void/i.test(lastLockSql));
+    assert.equal(typeof lastLockKey, "bigint");
+    const key = lastLockKey as bigint;
+    assert.ok(key >= -(2n ** 63n) && key < 2n ** 63n, "clave fuera de rango int8 con signo");
+
+    // Orden dentro de la transacción: lock → re-chequeo → envío → ledger.
+    const order = ["lock", "recheck", "send", "ledger"].map((e) => txEvents.indexOf(e));
+    assert.deepEqual(order, [...order].sort((a, b) => a - b));
+    assert.ok(order.every((i) => i >= 0), `eventos: ${txEvents.join(",")}`);
+  });
+
+  it("advisoryLockKey produce bigint con signo dentro del rango int8 de PostgreSQL", () => {
+    const samples = [
+      "hr-summary:5:daily:1725148800000",
+      "hr-summary:9223372036854775807:weekly:-1",
+      "empresa-✓-con-unicode:tardanzas",
+      ...Array.from({ length: 500 }, (_, i) => `hr-summary:${i}:${i % 2 === 0 ? "daily" : "weekly"}:${1725148800000 + i}`),
+    ];
+    for (const sample of samples) {
+      const key = advisoryLockKey(sample);
+      assert.equal(key, BigInt.asIntN(64, key), "clave no normalizada a 64 bits con signo");
+      assert.ok(
+        key >= -(2n ** 63n) && key < 2n ** 63n,
+        `clave fuera de rango int8 para ${sample}: ${key}`
+      );
+      // Determinista
+      assert.equal(advisoryLockKey(sample), key);
+    }
+  });
+
+  it("un P2034 de la transacción se propaga: un abort no prueba entrega (no already_sent)", async () => {
+    const deps = makeDeps();
+    const p2034 = Object.assign(new Error("Serialization failure"), { code: "P2034" });
+    const dbWithAbort = {
+      ...deps.db,
+      $transaction: async () => {
+        throw p2034;
+      },
+    };
+
+    await assert.rejects(
+      () =>
+        deliverExecutiveSummary(
+          { companyId: "5", kind: "daily", now: NOW },
+          { ...deps, db: dbWithAbort as SummaryDeliveryDeps["db"] }
+        ),
+      (err: unknown) =>
+        typeof err === "object" &&
+        err !== null &&
+        (err as { code?: string }).code === "P2034"
+    );
+    // El abort no es prueba de envío: no se envió nada y no hay ledger.
+    assert.equal(sentMails.length, 0);
+    assert.equal(store.logs.length, 0);
   });
 });
 

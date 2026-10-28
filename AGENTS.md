@@ -424,6 +424,7 @@ src/app/api/
 - **Config:** vars `CUENTI_PAY_*` en `src/lib/billing/env.ts`; `codigoUnico` numérico en `src/lib/billing/codigo-unico.ts`. Ver `docs/billing-cuenti-pay.md`.
 
 ## Reportes
+- Resumen ejecutivo semanal en dashboard y `GET /api/hr-summaries`; correo diario/semanal mediante `POST /api/cron/hr-summaries` con `CRON_SECRET`. Requiere programador externo; no instala un cron automáticamente. Usa SMTP existente y `LateReportLog`; ver `docs/hr-executive-summaries.md` para alcance y límites de deduplicación.
 - Pestaña **Detallado** en `/reports`: rango de fechas, filtros por empleado/sucursal, opción "Mostrar solo ausencias", exportación a Excel/PDF.
 
 ## API pública (v1)
@@ -496,7 +497,7 @@ src/app/api/
 - **Cliente (empresa):** `NEXT_PUBLIC_MCP_URL` + token (header Bearer o consent OAuth). **Nunca** `DATABASE_URL` ni ruta absoluta al binario.
 - **Origen (infra):** proceso `hr-mcp-server` en `:4101`. Next hace **rewrite/proxy** de `/mcp`, `/.well-known/*`, `/authorize`, `/token`, `/register`, `/revoke` → `MCP_UPSTREAM_URL` (mismo origen que la app/túnel). Vars: `DATABASE_URL`, `MCP_PUBLIC_URL` (issuer HTTPS público), `MCP_UPSTREAM_URL`, `MCP_ALLOWED_HOSTS`.
 - Consumo: **Claude** (Bearer) y **ChatGPT** (OAuth). Cursor opcional con `mcp-remote`.
-- 14 tools read-only. Incluye reportes RRHH, marcaciones en detalle (`get_attendance_records`), búsqueda de empleados (`find_employee`) y presentes actuales (`get_present_now`). Motor `src/lib/hr/`.
+- 15 tools read-only. Incluye reportes RRHH, resumen ejecutivo (`get_executive_summary`), marcaciones en detalle (`get_attendance_records`), búsqueda de empleados (`find_employee`) y presentes actuales (`get_present_now`). Motor `src/lib/hr/`; resúmenes compartidos en `src/lib/hr-summary/`.
 - UI: `/settings/integrations/mcp`. Scripts: `pnpm mcp:dev:http` / `mcp:start:http` / `mcp:build` / `mcp:test`.
 
 ## Integraciones (UI)
