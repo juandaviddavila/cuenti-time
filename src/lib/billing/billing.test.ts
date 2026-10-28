@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   computeBillingQuote,
+  computeMonthlyEstimate,
   BILLING_PERIOD_DAYS,
   roundMoney,
 } from "./pricing";
@@ -30,6 +31,40 @@ function testMonthlySubscription() {
   assert.equal(quote.kind, "subscription");
   assert.equal(quote.totalAmount, 4 * 3500);
   assert.equal(quote.isProrated, false);
+}
+
+function testMonthlyEstimateFromPublicConfig() {
+  // S6: la calculadora de empleados usa SOLO la config pública (BillingConfig).
+  const cop = computeMonthlyEstimate(
+    { employeeCount: 10, currency: "COP" },
+    config
+  );
+  assert.equal(cop.unitPrice, 3500);
+  assert.equal(cop.totalAmount, 35000);
+  assert.equal(cop.employeeCount, 10);
+
+  const usd = computeMonthlyEstimate(
+    { employeeCount: 7, currency: "USD" },
+    config
+  );
+  assert.equal(usd.unitPrice, 1);
+  assert.equal(usd.totalAmount, 7);
+}
+
+function testMonthlyEstimateRoundingAndFloor() {
+  // COP sin decimales; conteo mínimo 1 empleado; fracciones se redondean hacia abajo.
+  const cop = computeMonthlyEstimate(
+    { employeeCount: 3, currency: "COP" },
+    { priceCopPerEmployeeMonthly: 3333, priceUsdPerEmployeeMonthly: 0.99 }
+  );
+  assert.equal(cop.totalAmount, 9999);
+
+  const floored = computeMonthlyEstimate(
+    { employeeCount: 0, currency: "USD" },
+    config
+  );
+  assert.equal(floored.employeeCount, 1);
+  assert.equal(floored.totalAmount, 1);
 }
 
 function testAddonProrationFifteenDays() {
@@ -115,10 +150,12 @@ function testCodigoUnico() {
 }
 
 testMonthlySubscription();
+testMonthlyEstimateFromPublicConfig();
+testMonthlyEstimateRoundingAndFloor();
 testAddonProrationFifteenDays();
 testUsdTwoDecimals();
 testRejectUnderUse();
 testCancelRules();
 testCodigoUnico();
 
-console.log("billing tests: 6 passed");
+console.log("billing tests: 8 passed");

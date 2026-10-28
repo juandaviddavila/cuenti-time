@@ -75,6 +75,39 @@ export async function fetchBillingConfig(): Promise<MarketingBillingConfig> {
   }
 }
 
+export type MarketingCurrency = "COP" | "USD";
+
+export interface MonthlyPriceEstimate {
+  employeeCount: number;
+  unitPrice: number;
+  totalAmount: number;
+}
+
+/**
+ * Estimado mensual de la calculadora de precios (S6).
+ * Misma fórmula que `computeMonthlyEstimate` en `src/lib/billing/pricing.ts`
+ * del SaaS: se factura el cupo completo al precio unitario de la moneda
+ * elegida (COP sin decimales, USD hasta 2). Los valores siempre salen de
+ * la config pública; aquí no hay precios ni límites quemados.
+ */
+export function computeMonthlyPrice(
+  config: Pick<
+    MarketingBillingConfig,
+    "priceCopPerEmployeeMonthly" | "priceUsdPerEmployeeMonthly"
+  >,
+  employeeCount: number,
+  currency: MarketingCurrency
+): MonthlyPriceEstimate {
+  const count = Math.max(1, Math.floor(employeeCount));
+  const unitPrice =
+    currency === "COP"
+      ? config.priceCopPerEmployeeMonthly
+      : config.priceUsdPerEmployeeMonthly;
+  const totalAmount =
+    currency === "COP" ? Math.round(count * unitPrice) : Math.round(count * unitPrice * 100) / 100;
+  return { employeeCount: count, unitPrice, totalAmount };
+}
+
 export function formatCop(amount: number): string {
   return new Intl.NumberFormat("es-CO", {
     style: "currency",

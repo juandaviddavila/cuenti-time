@@ -6,6 +6,7 @@ import {
   formatCop,
   formatUsd,
 } from "@/lib/billing";
+import { PricingCalculator } from "@/components/pricing-calculator";
 
 export async function generateMetadata(): Promise<Metadata> {
   const config = await fetchBillingConfig();
@@ -136,6 +137,8 @@ export default async function PricingPage() {
               </a>
             </div>
           </div>
+
+          <PricingCalculator config={config} />
         </div>
       </section>
 

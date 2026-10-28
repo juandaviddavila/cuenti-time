@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { computeMonthlyEstimate } from "@/lib/billing/pricing";
 import type {
   BillingCurrency,
   BillingInvoiceDto,
@@ -52,7 +53,8 @@ interface Props {
 
 export function PricingClient({ isLoggedIn }: Props) {
   const [currency, setCurrency] = useState<BillingCurrency>("COP");
-  const [slots, setSlots] = useState(4);
+  // null hasta que llega la config pública: nada de cupos quemados en el cliente.
+  const [slots, setSlots] = useState<number | null>(null);
   const [status, setStatus] = useState<BillingStatus | null>(null);
   const [quote, setQuote] = useState<BillingQuote | null>(null);
   const [loading, setLoading] = useState(false);
@@ -71,14 +73,17 @@ export function PricingClient({ isLoggedIn }: Props) {
       : status.publicConfig.priceUsdPerEmployeeMonthly;
   }, [currency, status]);
 
-  const monthlyPreview = useMemo(() => {
-    if (unitPrice === null) return null;
-    const amount =
-      currency === "COP"
-        ? Math.round(slots * unitPrice)
-        : Math.round(slots * unitPrice * 100) / 100;
-    return amount;
-  }, [slots, unitPrice, currency]);
+  const freeLimit = status?.freeEmployeeLimit ?? null;
+  const effectiveSlots = slots ?? (freeLimit !== null ? freeLimit + 1 : 1);
+
+  // S6: el estimado sale de la config pública mediante el helper compartido.
+  const estimate = useMemo(() => {
+    if (!status?.publicConfig) return null;
+    return computeMonthlyEstimate(
+      { employeeCount: effectiveSlots, currency },
+      status.publicConfig
+    );
+  }, [effectiveSlots, currency, status]);
 
   useEffect(() => {
     void (async () => {
@@ -101,6 +106,8 @@ export function PricingClient({ isLoggedIn }: Props) {
                   publicConfig: json.data,
                 }
           );
+          // Punto de partida del calculador: justo por encima del cupo gratis.
+          setSlots((prev) => prev ?? json.data.freeEmployeeLimit + 1);
         }
       } catch {
         /* fallback UI */
@@ -116,7 +123,13 @@ export function PricingClient({ isLoggedIn }: Props) {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error ?? "No se pudo cargar billing");
         setStatus(json.data);
-        setSlots(Math.max(json.data.usedSlots || 1, json.data.maxEmployees || 4, 4));
+        setSlots(
+          Math.max(
+            json.data.usedSlots || 1,
+            json.data.maxEmployees || 1,
+            (json.data.freeEmployeeLimit || 0) + 1
+          )
+        );
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Error al cargar plan");
       }
@@ -132,7 +145,7 @@ export function PricingClient({ isLoggedIn }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "quote",
-          targetEmployeeSlots: slots,
+          targetEmployeeSlots: effectiveSlots,
           currency,
         }),
       });
@@ -164,7 +177,7 @@ export function PricingClient({ isLoggedIn }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "checkout",
-          targetEmployeeSlots: slots,
+          targetEmployeeSlots: effectiveSlots,
           currency,
           billingCustomer: customer,
         }),
@@ -205,7 +218,7 @@ export function PricingClient({ isLoggedIn }: Props) {
     }
   }
 
-  const freeLimit = status?.freeEmployeeLimit ?? 3;
+
 
   return (
     <main className="min-h-screen bg-slate-950 text-white">
@@ -217,7 +230,7 @@ export function PricingClient({ isLoggedIn }: Props) {
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Planes cuenti time</h1>
             <p className="text-slate-400">
-              Gratis hasta {freeLimit} empleados. Plan de pago mensual por empleado (API y MCP incluidos).
+              Gratis hasta {freeLimit ?? "…"} empleados. Plan de pago mensual por empleado (API y MCP incluidos).
             </p>
           </div>
         </div>
@@ -225,7 +238,7 @@ export function PricingClient({ isLoggedIn }: Props) {
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
             <p className="text-xs font-bold uppercase tracking-widest text-emerald-400">Plan gratis</p>
-            <h2 className="mt-3 text-2xl font-bold">Hasta {freeLimit} empleados</h2>
+            <h2 className="mt-3 text-2xl font-bold">Hasta {freeLimit ?? "…"} empleados</h2>
             <ul className="mt-6 space-y-3 text-sm text-slate-300">
               {[
                 "Marcaciones, sucursales y reportes básicos",
@@ -287,7 +300,7 @@ export function PricingClient({ isLoggedIn }: Props) {
                   type="number"
                   min={1}
                   max={5000}
-                  value={slots}
+                  value={effectiveSlots}
                   onChange={(e) => setSlots(Math.max(1, Number(e.target.value) || 1))}
                   className="mt-2 border-slate-700 bg-slate-950"
                 />
@@ -295,8 +308,15 @@ export function PricingClient({ isLoggedIn }: Props) {
               <p className="text-sm text-slate-400">
                 Estimado mensual:{" "}
                 <strong className="text-white">
-                  {monthlyPreview === null ? "Consultando…" : formatMoney(monthlyPreview, currency)}
+                  {estimate === null ? "Consultando…" : formatMoney(estimate.totalAmount, currency)}
                 </strong>
+                {estimate ? (
+                  <span>
+                    {" "}
+                    · {estimate.employeeCount} empleados ×{" "}
+                    {formatMoney(estimate.unitPrice, currency)} c/u
+                  </span>
+                ) : null}
                 {quote ? (
                   <>
                     {" "}

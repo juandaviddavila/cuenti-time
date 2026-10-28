@@ -515,7 +515,7 @@ src/app/api/
 - [ ] Deploy MCP detrás de Cloudflare (`NEXT_PUBLIC_MCP_URL` / `MCP_PUBLIC_URL` HTTPS)
 - [ ] Reporte diario por email de tardanzas/ausencias agrupado por turno y sucursal
 - [ ] Novedades colectivas por `shiftId` en UI/reportes
-- [ ] `/pricing` final conectada a pagos y cálculo de empleados extra
+- [x] `/pricing` y `/precios` leen `BillingConfig`, calculan el cupo mensual por empleados y mantienen el checkout existente
 - [ ] Alerta de cambio de prendas entrada vs salida (pipeline aparte de ArcFace; ver `docs/clothing-checkout-alert.md`)
 - [ ] Licencia comercial InsightFace `buffalo_s` (o modelo 512-D permisivo) antes de facturar facial
 

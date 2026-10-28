@@ -32,6 +32,34 @@ export function roundMoney(amount: number, currency: BillingCurrency): number {
   return Math.round(amount * 100) / 100;
 }
 
+/**
+ * Estimado mensual de la calculadora de precios (S6).
+ * Solo usa la configuración pública (BillingConfig): nada de precios quemados.
+ * Debe coincidir con la fórmula del backend (`computeBillingQuote`): se factura
+ * el cupo completo de empleados al precio unitario de la moneda elegida.
+ */
+export interface MonthlyEstimateInput {
+  employeeCount: number;
+  currency: BillingCurrency;
+}
+
+export interface MonthlyEstimate {
+  employeeCount: number;
+  currency: BillingCurrency;
+  unitPrice: number;
+  totalAmount: number;
+}
+
+export function computeMonthlyEstimate(
+  input: MonthlyEstimateInput,
+  config: BillingPricingConfig
+): MonthlyEstimate {
+  const employeeCount = Math.max(1, Math.floor(input.employeeCount));
+  const unitPrice = unitPriceForCurrency(input.currency, config);
+  const totalAmount = roundMoney(employeeCount * unitPrice, input.currency);
+  return { employeeCount, currency: input.currency, unitPrice, totalAmount };
+}
+
 function unitPriceForCurrency(
   currency: BillingCurrency,
   config: BillingPricingConfig
