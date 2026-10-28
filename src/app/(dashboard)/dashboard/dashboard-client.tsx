@@ -45,6 +45,7 @@ import {
 import { formatTime, getInitials } from "@/lib/utils";
 import type { DashboardStats } from "@/types/attendance";
 import type { DayOutcome } from "@/lib/hr/day-evaluation";
+import type { ExecutiveSummary } from "@/lib/hr-summary/summary";
 
 interface WeeklyData {
   day: string;
@@ -92,6 +93,7 @@ interface Props {
   weeklyData: WeeklyData[];
   recentAttendance: RecentAttendance[];
   dailyQuickReport: DailyQuickReport;
+  executiveSummary: ExecutiveSummary;
   userRole: string;
 }
 
@@ -198,6 +200,7 @@ export function DashboardClient({
   weeklyData,
   recentAttendance,
   dailyQuickReport,
+  executiveSummary,
   userRole,
 }: Props) {
   const statCards =
@@ -402,6 +405,109 @@ export function DashboardClient({
               ) : null}
             </>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between space-y-0">
+          <div className="space-y-1">
+            <CardTitle className="text-base flex items-center gap-2">
+              <TrendingUp className="h-4 w-4" />
+              Resumen ejecutivo de la semana
+            </CardTitle>
+            <CardDescription>
+              Tardanzas, ausencias y anomalías · mismo motor que los informes de
+              RR. HH.
+            </CardDescription>
+          </div>
+          <Button asChild variant="outline" size="sm" className="shrink-0">
+            <Link href="/reports/employee-summary">
+              Ver informe completo
+              <ArrowRight className="h-4 w-4 ml-1" />
+            </Link>
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            {[
+              { label: "Días laborales", value: executiveSummary.totals.workDays },
+              { label: "Presentes", value: executiveSummary.totals.present },
+              { label: "Tardanzas", value: executiveSummary.totals.late },
+              { label: "Ausencias", value: executiveSummary.totals.absent },
+              { label: "Sin salida", value: executiveSummary.totals.openDays },
+              {
+                label: "Salida anticipada",
+                value: executiveSummary.totals.earlyLeave,
+              },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="rounded-lg border bg-muted/30 px-3 py-2.5"
+              >
+                <p className="text-xs text-muted-foreground mb-1">{item.label}</p>
+                <p className="text-xl font-semibold tabular-nums">{item.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="rounded-lg border p-3">
+              <p className="text-sm font-medium mb-2">
+                Más tardanzas ({executiveSummary.totals.totalLateMinutes} min
+                acumulados)
+              </p>
+              {executiveSummary.topLateEmployees.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  Sin tardanzas esta semana
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {executiveSummary.topLateEmployees.map((e) => (
+                    <li
+                      key={e.employeeId}
+                      className="flex items-center justify-between text-sm"
+                    >
+                      <span className="truncate">{e.employeeName}</span>
+                      <span className="text-xs text-amber-600 dark:text-amber-400 tabular-nums shrink-0 ml-2">
+                        {e.days} día(s) · {e.minutes} min
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-sm font-medium mb-2">
+                Más ausencias ({executiveSummary.totals.justifiedAbsent}{" "}
+                justificadas)
+              </p>
+              {executiveSummary.topAbsentEmployees.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  Sin ausencias esta semana
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {executiveSummary.topAbsentEmployees.map((e) => (
+                    <li
+                      key={e.employeeId}
+                      className="flex items-center justify-between text-sm"
+                    >
+                      <span className="truncate">{e.employeeName}</span>
+                      <span className="text-xs text-red-600 dark:text-red-400 tabular-nums shrink-0 ml-2">
+                        {e.days} día(s)
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {executiveSummary.anomalies.length > 0 ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                  {executiveSummary.anomalies.length} día(s) con anomalías (sin
+                  salida o tarde + salida anticipada)
+                </p>
+              ) : null}
+            </div>
+          </div>
         </CardContent>
       </Card>
 

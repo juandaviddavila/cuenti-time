@@ -2,6 +2,7 @@ import { z } from "zod";
 import { endOfDay, startOfDay } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { loadHrEvaluations } from "@/lib/hr/load-hr-evaluations";
+import { buildExecutiveSummary } from "@/lib/hr-summary/summary";
 import { parseLocalDateParam } from "@/lib/hr/local-date";
 import type { UserRole } from "@/types/user";
 import type { TenantSession } from "@/lib/tenant";
@@ -295,6 +296,28 @@ const getDailySnapshot: ToolHandler = {
             range: result.range,
             count: days.size,
             data: Array.from(days.values()).sort((a, b) => a.date.localeCompare(b.date)),
+          }),
+        },
+      ],
+    };
+  },
+};
+
+const getExecutiveSummary: ToolHandler = {
+  name: "get_executive_summary",
+  description:
+    "Resumen ejecutivo del período: totales de puntualidad, tardanzas, ausencias, salidas anticipadas y anomalías, destacados por empleado y desglose por sucursal. Solo lectura.",
+  inputSchema: toolJsonSchema(hrReportToolSchema),
+  execute: async (args, ctx) => {
+    const input = parseArgs(hrReportToolSchema, args);
+    const result = await runHrReport(ctx.token, input, "daily");
+    return {
+      content: [
+        {
+          type: "text",
+          text: safeJson({
+            range: result.range,
+            summary: buildExecutiveSummary(result.evaluations),
           }),
         },
       ],
@@ -721,6 +744,7 @@ export const TOOL_REGISTRY: Map<string, ToolHandler> = new Map(
     getEmployeeSummary,
     getBranchSummary,
     getDailySnapshot,
+    getExecutiveSummary,
     getAttendanceRecords,
     findEmployee,
     getPresentNow,

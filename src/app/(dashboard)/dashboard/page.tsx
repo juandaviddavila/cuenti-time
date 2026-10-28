@@ -6,6 +6,8 @@ import { DashboardClient } from "./dashboard-client";
 import { subDays, startOfDay, endOfDay, format } from "date-fns";
 import { es } from "date-fns/locale";
 import { loadHrEvaluations } from "@/lib/hr/load-hr-evaluations";
+import { loadExecutiveSummary } from "@/lib/hr-summary/service";
+import { weeklySummaryPeriod } from "@/lib/hr-summary/period";
 import { serializeRecords } from "@/lib/bigint";
 
 export default async function DashboardPage() {
@@ -121,6 +123,9 @@ export default async function DashboardPage() {
   const lateArrivals = workDayEvals.filter((r) => r.lateMinutes > 0).length;
   const absentToday = workDayEvals.filter((r) => r.outcome === "AUSENTE").length;
 
+  // ── Resumen ejecutivo semanal (mismo motor determinista /api/hr-summaries) ─
+  const hrWeek = await loadExecutiveSummary(session, weeklySummaryPeriod(today));
+
   const dailyQuickReport = {
     present: workDayEvals.filter(
       (r) =>
@@ -188,6 +193,7 @@ export default async function DashboardPage() {
         confidenceScore: r.confidenceScore,
       })))}
       dailyQuickReport={dailyQuickReport}
+      executiveSummary={hrWeek.summary}
       userRole={session.role}
     />
   );

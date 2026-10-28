@@ -11,9 +11,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const toolsFile = readFileSync(join(__dirname, "../tools.ts"), "utf-8");
 
 describe("tool registry", () => {
-  it("exposes exactly 14 tools", () => {
+  it("exposes exactly 15 tools", () => {
     const tools = listToolDefinitions();
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(15);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([
       "find_employee",
@@ -24,6 +24,7 @@ describe("tool registry", () => {
       "get_daily_snapshot",
       "get_early_leaves",
       "get_employee_summary",
+      "get_executive_summary",
       "get_incidents",
       "get_late_arrivals",
       "get_open_days",
@@ -76,6 +77,32 @@ describe("entity tools", () => {
     expect(result.content).toHaveLength(1);
     const data = JSON.parse(result.content[0].text);
     expect(data.data.id).toBe(testToken.companyId);
+  });
+
+  it("get_executive_summary returns a deterministic tenant-scoped summary", async () => {
+    const tool = getTool("get_executive_summary");
+    const result = await tool!.execute(
+      { from: "2026-07-20", to: "2026-07-26" },
+      { token: { tokenId: testToken.tokenId, companyId: testToken.companyId, scopes: ["read"] }, companyId: stringToBigint(testToken.companyId) }
+    );
+    const data = JSON.parse(result.content[0].text);
+    expect(data.range).toBeDefined();
+    expect(data.summary.totals).toEqual({
+      workDays: 0,
+      present: 0,
+      late: 0,
+      absent: 0,
+      justifiedAbsent: 0,
+      earlyLeave: 0,
+      openDays: 0,
+      totalLateMinutes: 0,
+      totalEarlyLeaveMinutes: 0,
+      punctualityRate: 0,
+    });
+    expect(data.summary.topLateEmployees).toEqual([]);
+    expect(data.summary.topAbsentEmployees).toEqual([]);
+    expect(data.summary.anomalies).toEqual([]);
+    expect(data.summary.byBranch).toEqual([]);
   });
 
   it("list_employees returns only company employees", async () => {
