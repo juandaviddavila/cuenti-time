@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireSession, getCompanyFilter } from "@/lib/server-auth";
+import { requireAttendanceSession } from "@/lib/kiosk/auth";
 import { createAuditLog } from "@/lib/audit";
 import { scheduleWebhookEvent } from "@/lib/webhooks/dispatch";
 import { stringToBigint } from "@/lib/bigint";
@@ -36,11 +37,15 @@ const createBranchSchema = z.object({
 export async function GET(request: NextRequest) {
   let session;
   try {
-    session = await requireSession();
+    session = await requireAttendanceSession();
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  if (session.kioskBranchId) {
+    const branch = await prisma.branch.findFirst({ where: { id: BigInt(session.kioskBranchId), companyId: BigInt(session.companyId!), status: "ACTIVE" }, select: { id: true, name: true, duplicateWindowMinutes: true } });
+    return NextResponse.json({ data: branch ? [{ ...branch, id: branch.id.toString() }] : [], pagination: { page: 1, pageSize: 1, total: branch ? 1 : 0, totalPages: branch ? 1 : 0 } }, { headers: { "Cache-Control": "no-store" } });
+  }
   const { searchParams } = new URL(request.url);
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
   const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get("pageSize") ?? "20")));

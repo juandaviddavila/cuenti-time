@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { startOfDay, endOfDay, differenceInMinutes } from "date-fns";
 import { prisma } from "@/lib/prisma";
-import { requireSession, userBypassesGeofence } from "@/lib/server-auth";
+import { userBypassesGeofence } from "@/lib/server-auth";
+import { requireAttendanceSession as requireSession } from "@/lib/kiosk/auth";
 import { createAuditLog } from "@/lib/audit";
 import { distanceInMeters } from "@/lib/geo";
 import { isMobileUserAgent } from "@/lib/device";
@@ -59,6 +60,10 @@ export async function POST(request: NextRequest) {
 
   const { employeeId, branchId, type, deviceClass: bodyDeviceClass, ...rest } = parsed.data;
 
+  if (session.kioskBranchId && (branchId.toString() !== session.kioskBranchId || rest.isManual)) {
+    return NextResponse.json({ error: "Sucursal o marcación no autorizada" }, { status: 403 });
+  }
+
   const employee = await prisma.employee.findUnique({
     where: { id: employeeId },
     select: { id: true, companyId: true, branchId: true, status: true, fullName: true },
@@ -70,7 +75,8 @@ export async function POST(request: NextRequest) {
 
   if (
     session.role !== "SAAS_SUPER_ADMIN" &&
-    employee.companyId.toString() !== session.companyId
+    employee.companyId.toString() !== session.companyId ||
+    (session.kioskBranchId && employee.branchId.toString() !== session.kioskBranchId)
   ) {
     return NextResponse.json({ error: "Empleado no encontrado" }, { status: 404 });
   }
@@ -99,7 +105,7 @@ export async function POST(request: NextRequest) {
 
   const windowMinutes = branch.duplicateWindowMinutes;
   const branchHasGeofence = branch.latitude !== null && branch.longitude !== null;
-  const skipGeofence = await userBypassesGeofence(session.userId);
+  const skipGeofence = session.kioskDeviceId ? false : await userBypassesGeofence(session.userId);
   const deviceClass =
     bodyDeviceClass ??
     (isMobileUserAgent(request.headers.get("user-agent")) ? "mobile" : "desktop");
@@ -215,7 +221,8 @@ export async function POST(request: NextRequest) {
     if (err instanceof DuplicateRecordError) {
       await createAuditLog({
         request,
-        session,
+        session: session.kioskDeviceId ? null : session,
+        companyId: employee.companyId,
         action: "DUPLICATE_ATTENDANCE",
         entity: "ATTENDANCE",
         entityId: employeeId,
@@ -248,7 +255,13 @@ export async function GET(request: NextRequest) {
   const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get("pageSize") ?? "20")));
   const employeeId = searchParams.get("employeeId") ?? undefined;
   const employeeIdBigInt = employeeId ? stringToBigint(employeeId) : undefined;
-  const branchId = searchParams.get("branchId") ?? undefined;
+  if (session.kioskBranchId && (!employeeId || !/^[1-9]\d*$/.test(employeeId))) {
+    return NextResponse.json({ error: "Empleado requerido" }, { status: 400 });
+  }
+  if (session.kioskBranchId && searchParams.get("branchId") && searchParams.get("branchId") !== session.kioskBranchId) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const branchId = session.kioskBranchId ?? searchParams.get("branchId") ?? undefined;
   const branchIdBigInt = branchId ? stringToBigint(branchId) : undefined;
   const date = searchParams.get("date");
 

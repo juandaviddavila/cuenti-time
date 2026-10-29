@@ -60,6 +60,8 @@ model Company {
   webhookDeliveries       WebhookDelivery[]
   payments                Payment[]
   lateReportLogs          LateReportLog[]
+  kioskDevices            KioskDevice[]
+  kioskGrants             KioskGrant[]
 
   @@index([taxId])
   @@index([status])
@@ -92,6 +94,8 @@ model Branch {
   faceValidations        FaceValidationLog[]
   incidents              Incident[]
   lateReportLogs         LateReportLog[]
+  kioskDevices           KioskDevice[]
+  kioskGrants            KioskGrant[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -361,6 +365,7 @@ model User {
   createdAt              DateTime   @default(now())
   updatedAt              DateTime   @updatedAt
   auditLogs              AuditLog[]
+  kioskGrants            KioskGrant[]
   company                Company?   @relation(fields: [companyId], references: [id])
 
   @@index([email])
@@ -565,4 +570,35 @@ model LateReportLog {
   @@index([branchId])
   @@index([date])
   @@index([companyId])
+}
+
+// A grant adds only branch-scoped kiosk management, not a broader user role.
+model KioskGrant {
+  id        BigInt   @id @default(autoincrement())
+  companyId BigInt
+  branchId  BigInt
+  userId    BigInt
+  createdAt DateTime @default(now())
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, branchId])
+  @@index([companyId])
+}
+
+model KioskDevice {
+  id                  BigInt    @id @default(autoincrement())
+  companyId           BigInt
+  branchId            BigInt
+  name                String
+  activationHash      String    @unique
+  activationExpiresAt DateTime
+  tokenHash           String?   @unique
+  activatedAt         DateTime?
+  revokedAt           DateTime?
+  expiresAt           DateTime
+  createdAt           DateTime  @default(now())
+  company             Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch              Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  @@index([companyId, branchId])
 }

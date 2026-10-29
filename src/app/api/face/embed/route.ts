@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { embedAlignedRgba } from "@/lib/ai/arcface-server";
-import { requireSession } from "@/lib/server-auth";
+import { requireAttendanceSession as requireSession } from "@/lib/kiosk/auth";
 import { rateLimit } from "@/lib/rate-limit";
 
 const MAX_CROP_BASE64_LENGTH = 70_000;

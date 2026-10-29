@@ -103,6 +103,13 @@ export const NAV_ENTRIES: NavEntry[] = [
   },
   {
     kind: "link",
+    label: "Kioscos",
+    href: "/kiosks",
+    icon: ScanFace,
+    roles: ["SAAS_SUPER_ADMIN", "COMPANY_ADMIN", "BRANCH_SUPERVISOR", "FACE_REGISTRAR", "REPORT_VIEWER", "DEVELOPER"],
+  },
+  {
+    kind: "link",
     label: "Registro facial",
     href: "/facial-registration",
     icon: ScanFace,

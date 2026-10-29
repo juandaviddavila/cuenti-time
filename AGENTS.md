@@ -378,6 +378,13 @@ src/app/api/
 - Al buscar recursos por ID (employee, branch, etc.) siempre verificar que `resource.companyId === session.companyId` antes de devolver datos.
 - **Nunca** hacer `prisma.xxx.findMany()` sin filtro en producción — fuga multi-tenant.
 
+## Kioscos por sucursal
+
+- `/kiosks` permite crear códigos de activación de un uso y revocar dispositivos. Los administradores gestionan su empresa; otros usuarios requieren un `KioskGrant` por sucursal. Solo el administrador concede o retira esos permisos; el supervisor queda limitado a su sucursal asignada.
+- `KioskDevice` guarda hashes, no códigos ni credenciales en claro. Activación de 15 minutos; sesión de dispositivo de hasta 30 días, en cookie httpOnly separada. No autoriza dashboard ni administración de usuarios.
+- `requireAttendanceSession()` se usa solo en los datos de kiosco: valida revocación y fuerza empresa/sucursal. `requireSession()` sigue siendo solo para cuentas. La pantalla envía `x-kiosk-mode: 1` para no heredar una cuenta abierta.
+- Las tablas nuevas requieren actualización explícita del esquema en una base autorizada; no se ejecuta automáticamente. Guía: `docs/kiosk-activation.md`.
+
 ## Motor de asistencia — reglas
 
 - Prevención de doble marcación: `POST /api/attendance` verifica la última marcación del día en transacción antes de crear.

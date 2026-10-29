@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { SignJWT } from "jose/jwt/sign";
 import { jwtVerify } from "jose/jwt/verify";
 import { extractTokenPayload } from "@/lib/session-tokens";
+import { isKioskDataRoute, KIOSK_COOKIE_NAME } from "@/lib/kiosk/routes";
 
 const ACCESS_COOKIE = {
   httpOnly: true,
@@ -27,6 +28,7 @@ const PUBLIC_PATHS = [
   "/pricing",
   "/pricing/success",
   "/kiosk",
+  "/api/kiosk",
   "/api/auth/login",
   "/api/auth/login/verify",
   "/api/auth/login/resend",
@@ -145,6 +147,12 @@ export async function middleware(request: NextRequest) {
 
   // Allow public paths (exact prefix match — prevents /login.hack bypasses)
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
+    return NextResponse.next();
+  }
+
+  // Dispatch only: each selected handler independently validates/revokes the
+  // opaque device credential and forces its tenant + branch scope.
+  if (request.cookies.has(KIOSK_COOKIE_NAME) && isKioskDataRoute(pathname, request.method)) {
     return NextResponse.next();
   }
 

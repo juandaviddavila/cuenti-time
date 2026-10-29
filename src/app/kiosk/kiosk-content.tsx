@@ -72,7 +72,7 @@ async function searchFaceInDatabase(
   try {
     const response = await fetch("/api/face/search", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-kiosk-mode": "1" },
       body: JSON.stringify({ descriptor, branchId }),
     });
     if (!response.ok) return { status: "error" };
@@ -95,7 +95,7 @@ async function searchFaceInDatabase(
 
 const RESET_DELAY = 10_000;
 
-export default function KioskPage() {
+function ActiveKioskPage() {
   const router = useRouter();
   const videoRef    = useRef<HTMLVideoElement>(null);
   const streamRef   = useRef<MediaStream | null>(null);
@@ -129,7 +129,7 @@ export default function KioskPage() {
 
   // ── Load branches ────────────────────────────────────────────────────────
   useEffect(() => {
-    fetch("/api/branches?pageSize=100")
+    fetch("/api/branches?pageSize=100", { headers: { "x-kiosk-mode": "1" }, cache: "no-store" })
       .then(r => r.json())
       .then((d: { data?: BranchOption[] }) => {
         const list = d.data ?? [];
@@ -142,7 +142,7 @@ export default function KioskPage() {
   // ── Load registered employees with face descriptors ──────────────────────
   useEffect(() => {
     if (!branchId) return;
-    fetch("/api/face/descriptors")
+    fetch("/api/face/descriptors", { headers: { "x-kiosk-mode": "1" }, cache: "no-store" })
       .then(r => r.json())
       .then(async (d: { data?: RegisteredEmp[]; faceMatchThreshold?: number }) => {
         if (typeof d.faceMatchThreshold === "number") {
@@ -343,7 +343,7 @@ export default function KioskPage() {
       const windowMinutes = branch?.duplicateWindowMinutes ?? 10;
       // GPS en paralelo con la última marcación: no sumar su latencia al flujo.
       const locationPromise = getBrowserLocationIfMobile();
-      const lastRecord = await fetchLastAttendanceRecord(employeeId);
+      const lastRecord = await fetchLastAttendanceRecord(employeeId, { "x-kiosk-mode": "1" });
       const decision = decideAttendanceMarkType(lastRecord, windowMinutes);
 
       if ("error" in decision) {
@@ -358,7 +358,7 @@ export default function KioskPage() {
 
       const res = await fetch("/api/attendance", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-kiosk-mode": "1" },
         body: JSON.stringify({
           employeeId,
           branchId,
@@ -598,4 +598,46 @@ export default function KioskPage() {
       </div>
     </div>
   );
+}
+
+
+export default function KioskEntry() {
+  const [active, setActive] = useState<boolean | null>(null);
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function check() {
+      try {
+        const response = await fetch("/api/kiosk/session", { cache: "no-store" });
+        if (!cancelled) setActive(response.ok);
+      } catch {
+        if (!cancelled) setActive(false);
+      }
+      if (!cancelled) timer = setTimeout(check, 30_000);
+    }
+    void check();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, []);
+  async function activate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError("");
+    try {
+      const response = await fetch("/api/kiosk/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: code.trim() }) });
+      if (!response.ok) { const data = await response.json(); throw new Error(data.error ?? "No se pudo activar"); }
+      setCode(""); setActive(true);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "No se pudo activar"); }
+    finally { setBusy(false); }
+  }
+  if (active) return <ActiveKioskPage />;
+  return <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+    {active === null ? <p role="status">Verificando kiosco…</p> : <form onSubmit={activate} className="w-full max-w-md space-y-5">
+      <h1 className="text-2xl font-semibold">Activar este kiosco</h1>
+      <p className="text-slate-300">Solicita un código de activación al responsable de tu sucursal. No necesitas su contraseña.</p>
+      <label className="block space-y-2"><span>Código de activación</span><input value={code} onChange={e => setCode(e.target.value)} required autoComplete="off" spellCheck={false} maxLength={43} className="w-full rounded-md border border-slate-600 bg-slate-900 p-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white" /></label>
+      {error && <p role="alert" className="text-red-300">{error}</p>}
+      <Button type="submit" disabled={busy || code.trim().length !== 43}>{busy ? "Activando…" : "Activar kiosco"}</Button>
+    </form>}
+  </main>;
 }

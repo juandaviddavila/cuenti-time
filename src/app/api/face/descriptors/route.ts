@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireSession, getCompanyFilter } from "@/lib/server-auth";
+import { getCompanyFilter } from "@/lib/server-auth";
+import { requireAttendanceSession as requireSession } from "@/lib/kiosk/auth";
 import { fromPgVector } from "@/lib/ai/pgvector";
 import {
   clampFaceMatchThreshold,
@@ -31,6 +32,7 @@ export async function GET() {
     ? Prisma.sql`AND e."companyId" = ${companyFilter.companyId}`
     : Prisma.empty;
 
+  const branchWhere = session.kioskBranchId ? Prisma.sql`AND e."branchId" = ${BigInt(session.kioskBranchId)}` : Prisma.empty;
   const employees = await prisma.$queryRaw<FaceDescriptorRow[]>`
     SELECT
       e."id"::text AS "employeeId",
@@ -43,6 +45,7 @@ export async function GET() {
     LEFT JOIN "Position" p ON p."id" = e."positionId"
     WHERE e."status" = 'ACTIVE'
       ${companyWhere}
+      ${branchWhere}
       AND (e."faceEmbedding" IS NOT NULL OR e."photo" IS NOT NULL)
   `;
 

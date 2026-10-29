@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireSession, getCompanyFilter } from "@/lib/server-auth";
+import { getCompanyFilter } from "@/lib/server-auth";
+import { requireAttendanceSession as requireSession } from "@/lib/kiosk/auth";
 import { FACE_EMBEDDING_DIMENSIONS, toPgVector } from "@/lib/ai/pgvector";
 import {
   clampFaceMatchThreshold,
@@ -62,6 +63,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  if (session.kioskBranchId) {
+    if (parsed.data.branchId && parsed.data.branchId.toString() !== session.kioskBranchId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    parsed.data.branchId = BigInt(session.kioskBranchId);
+  }
   const companyFilter = getCompanyFilter(session);
   const companyThreshold = await resolveCompanyThreshold(
     session.companyId ? stringToBigint(session.companyId) : null

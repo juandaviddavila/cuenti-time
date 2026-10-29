@@ -64,10 +64,12 @@ export function decideAttendanceMarkType(
 }
 
 export async function fetchLastAttendanceRecord(
-  employeeId: string
+  employeeId: string,
+  headers?: Record<string, string>
 ): Promise<AttendanceRecord | null> {
   const res = await fetch(
-    `/api/attendance?employeeId=${encodeURIComponent(employeeId)}&pageSize=1`
+    `/api/attendance?employeeId=${encodeURIComponent(employeeId)}&pageSize=1`,
+    headers ? { headers, cache: "no-store" } : undefined
   );
   if (!res.ok) return null;
   const data = await res.json() as { data?: AttendanceRecord[] };
