@@ -243,6 +243,16 @@
   border-bottom: 0;
 }
 
+@media (max-width: 480px) {
+  .previewEvent {
+    grid-template-columns: 48px 1fr auto;
+  }
+
+  .eventAvatar {
+    display: none;
+  }
+}
+
 .eventTime {
   font-size: 0.85rem;
   font-weight: 700;
