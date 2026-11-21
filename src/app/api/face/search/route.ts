@@ -15,6 +15,16 @@ const searchFaceSchema = z.object({
   descriptor: z.array(z.number()).length(FACE_EMBEDDING_DIMENSIONS),
   branchId: z.coerce.bigint().positive().optional(),
   excludeEmployeeId: z.coerce.bigint().positive().optional(),
+  /** Origen del intento; sin él (p. ej. anti-duplicados) no se registra. */
+  source: z.enum(["kiosk", "registration"]).optional(),
+  quality: z
+    .object({
+      sharpness: z.number().finite().min(0).max(1_000_000).optional(),
+      luminance: z.number().finite().min(0).max(255).optional(),
+      rollDeg: z.number().finite().min(-180).max(180).optional(),
+      yawAsymmetry: z.number().finite().min(-1).max(1).optional(),
+    })
+    .optional(),
 });
 
 interface FaceSearchRow {
@@ -134,6 +144,34 @@ export async function POST(request: NextRequest) {
     threshold: companyThreshold,
     effectiveThreshold: decision.effectiveThreshold,
   });
+
+  if (parsed.data.source) {
+    // Mejor esfuerzo: auditar nunca debe romper ni demorar la marcación.
+    void prisma.faceMatchAttempt
+      .create({
+        data: {
+          companyId: session.companyId ? stringToBigint(session.companyId) : null,
+          branchId: parsed.data.branchId ?? null,
+          bestEmployeeId: stringToBigint(best.employeeId),
+          secondEmployeeId: second ? stringToBigint(second.employeeId) : null,
+          reason: decision.reason,
+          distance: Number.isFinite(bestDistance) ? bestDistance : null,
+          secondDistance:
+            secondDistance != null && Number.isFinite(secondDistance)
+              ? secondDistance
+              : null,
+          threshold: decision.effectiveThreshold,
+          source: parsed.data.source,
+          sharpness: parsed.data.quality?.sharpness,
+          luminance: parsed.data.quality?.luminance,
+          rollDeg: parsed.data.quality?.rollDeg,
+          yawAsymmetry: parsed.data.quality?.yawAsymmetry,
+        },
+      })
+      .catch((error: unknown) => {
+        console.error("[face/search] no se pudo registrar el intento", error);
+      });
+  }
 
   if (!decision.ok) {
     return NextResponse.json({

@@ -23,6 +23,7 @@ import {
   isModelsLoaded,
   keepFacesWithDescriptor,
   type FacePresence,
+  type IdentificationQuality,
 } from "@/lib/ai/face-api-service";
 import {
   FACE_SOFT_RETRY_COOLDOWN_MS,
@@ -80,12 +81,15 @@ type FaceSearchOutcome =
   | { status: "none"; distance?: number }
   | { status: "error" };
 
-async function searchFaceInDatabase(descriptor: number[]): Promise<FaceSearchOutcome> {
+async function searchFaceInDatabase(
+  descriptor: number[],
+  quality?: IdentificationQuality
+): Promise<FaceSearchOutcome> {
   try {
     const response = await fetch("/api/face/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ descriptor }),
+      body: JSON.stringify({ descriptor, quality, source: "registration" }),
     });
     if (!response.ok) return { status: "error" };
     const data = (await response.json()) as {
@@ -305,12 +309,12 @@ function FacialRegistrationContent() {
         if (!descriptor) {
           stableHitsRef.current = 0;
           softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
-          setScanMessage("Acerque la cara y mire de frente");
+          setScanMessage(detection.issue ?? "Acerque la cara y mire de frente");
           return;
         }
 
         setScanMessage("Buscando identidad...");
-        const serverOutcome = await searchFaceInDatabase(descriptor);
+        const serverOutcome = await searchFaceInDatabase(descriptor, detection.quality);
         let matched: RegisteredFace | FaceSearchMatch | null = null;
 
         if (serverOutcome.status === "ambiguous") {

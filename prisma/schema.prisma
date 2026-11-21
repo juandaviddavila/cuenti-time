@@ -369,6 +369,32 @@ model User {
   @@index([role])
 }
 
+/// Un intento de identificación facial (kiosco / registro automático).
+/// Solo ids y números: nunca imágenes ni embeddings. Sirve para auditar
+/// falsos positivos/negativos y calibrar umbrales con datos reales.
+model FaceMatchAttempt {
+  id               BigInt   @id @default(autoincrement())
+  companyId        BigInt?
+  branchId         BigInt?
+  bestEmployeeId   BigInt?
+  secondEmployeeId BigInt?
+  /// match | no_match | weak_match | ambiguous
+  reason           String
+  distance         Float?
+  secondDistance   Float?
+  threshold        Float
+  /// kiosk | registration
+  source           String?
+  sharpness        Float?
+  luminance        Float?
+  rollDeg          Float?
+  yawAsymmetry     Float?
+  createdAt        DateTime @default(now())
+
+  @@index([companyId, createdAt])
+  @@index([bestEmployeeId, createdAt])
+}
+
 model AuditLog {
   id        BigInt   @id @default(autoincrement())
   companyId BigInt?

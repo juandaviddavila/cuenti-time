@@ -17,6 +17,7 @@ import {
   isConfidentMatch,
   isModelsLoaded,
   keepFacesWithDescriptor,
+  type IdentificationQuality,
 } from "@/lib/ai/face-api-service";
 import {
   FACE_SOFT_RETRY_COOLDOWN_MS,
@@ -67,13 +68,14 @@ type FaceSearchOutcome =
 
 async function searchFaceInDatabase(
   descriptor: number[],
-  branchId: string
+  branchId: string,
+  quality?: IdentificationQuality
 ): Promise<FaceSearchOutcome> {
   try {
     const response = await fetch("/api/face/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ descriptor, branchId }),
+      body: JSON.stringify({ descriptor, branchId, quality, source: "kiosk" }),
     });
     if (!response.ok) return { status: "error" };
     const data = (await response.json()) as {
@@ -250,12 +252,16 @@ export default function KioskPage() {
         if (!descriptor) {
           stableHitsRef.current = 0;
           softRetryUntilRef.current = Date.now() + FACE_SOFT_RETRY_COOLDOWN_MS;
-          setStatusMsg("Acerque la cara y mire de frente");
+          setStatusMsg(detection.issue ?? "Acerque la cara y mire de frente");
           return;
         }
 
         setStatusMsg("Buscando identidad...");
-        const serverOutcome = await searchFaceInDatabase(descriptor, currentBranchId);
+        const serverOutcome = await searchFaceInDatabase(
+          descriptor,
+          currentBranchId,
+          detection.quality
+        );
         if (serverOutcome.status === "match") {
           void runIdentification(serverOutcome.match);
           return;

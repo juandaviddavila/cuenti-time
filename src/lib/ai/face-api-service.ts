@@ -88,19 +88,6 @@ function frameSize(
   return { width: input.width, height: input.height };
 }
 
-function faceQualityScore(
-  box: { x: number; y: number; width: number; height: number },
-  frameWidth: number,
-  frameHeight: number
-): number {
-  if (frameWidth <= 0 || frameHeight <= 0) return 0;
-  const areaRatio = (box.width * box.height) / (frameWidth * frameHeight);
-  const centerX = (box.x + box.width / 2) / frameWidth;
-  const centerY = (box.y + box.height / 2) / frameHeight;
-  const centerPenalty = Math.hypot(centerX - 0.5, centerY - 0.5);
-  return areaRatio - centerPenalty * 0.4;
-}
-
 async function detectWithFaceApi(
   input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement,
   options?: { minScore?: number; minBoxPx?: number; withLandmarks?: boolean }
@@ -195,7 +182,18 @@ export function isModelsLoaded(): boolean {
 
 export { getArcFaceBackend };
 
+/** Métricas del frame aceptado; se envían al servidor para auditar intentos. */
+export interface IdentificationQuality {
+  sharpness: number;
+  luminance: number;
+  rollDeg: number;
+  yawAsymmetry: number;
+}
+
 export interface FaceDetectionResult {
+  /** Por qué no hubo descriptor (mensaje listo para mostrar al usuario). */
+  issue?: string;
+  quality?: IdentificationQuality;
   detected: boolean;
   descriptor: number[] | null;
   box: { x: number; y: number; width: number; height: number } | null;
@@ -371,6 +369,12 @@ export function averageFaceEmbeddings(vectors: number[][]): number[] | null {
  * Espera a que la cara esté quieta (2 embeddings seguidos parecidos) y
  * solo entonces devuelve el promedio de esos dos. No promedia frames
  * movidos con uno bueno: eso ensuciaba el primer /api/face/search.
+ *
+ * Identificar exige la misma calidad frontal que enrolar (nitidez, luz, roll,
+ * yaw): un frame borroso o de perfil produce un embedding genérico que se
+ * parece a cualquiera. El embedding (caro) solo se calcula si el frame pasa.
+ * Si no hay dos muestras estables y buenas NO se devuelve una sola muestra:
+ * se pide reintento con el motivo en `issue`.
  */
 export async function detectFaceConsensus(
   input: HTMLVideoElement
@@ -379,13 +383,15 @@ export async function detectFaceConsensus(
   const started = Date.now();
   const maxMs = 1400;
   const maxSamples = 8;
-  const ranked: Array<{ result: FaceDetectionResult; score: number }> = [];
   let previous: number[] | null = null;
+  let lastIssue: string | undefined;
 
   for (let i = 0; i < maxSamples && Date.now() - started < maxMs; i++) {
-    const result = await detectFace(input);
-    if (!result.descriptor || !result.box) {
+    const result = await detectAndAlignFace(input);
+    const aligned = result.alignedCanvas;
+    if (!result.detected || !result.box || !result.fivePoints || !aligned) {
       previous = null;
+      lastIssue = "Acerque la cara y mire de frente";
       await wait(70);
       continue;
     }
@@ -393,39 +399,57 @@ export async function detectFaceConsensus(
     const areaRatio = (result.box.width * result.box.height) / (width * height);
     if (areaRatio < MIN_IDENTITY_AREA_RATIO) {
       previous = null;
+      lastIssue = "Acérquese un poco más a la cámara";
       await wait(70);
       continue;
     }
-    const score = faceQualityScore(result.box, width, height);
 
-    ranked.push({ result, score });
+    const quality = evaluateAlignedFace(aligned, result.fivePoints, null);
+    if (!quality.ok) {
+      previous = null;
+      lastIssue = quality.issues[0];
+      await wait(70);
+      continue;
+    }
 
-    if (previous) {
-      const pairDistance = cosineDistance(previous, result.descriptor);
-      if (pairDistance <= STABLE_PAIR_DISTANCE) {
-        const descriptor = averageFaceEmbeddings([previous, result.descriptor]);
-        if (descriptor) {
-          return { ...result, detected: true, descriptor };
-        }
+    const descriptor = await embedFromAligned(aligned);
+    if (!descriptor) {
+      previous = null;
+      lastIssue = "Procesando rostro — un momento";
+      await wait(70);
+      continue;
+    }
+
+    if (previous && cosineDistance(previous, descriptor) <= STABLE_PAIR_DISTANCE) {
+      const averaged = averageFaceEmbeddings([previous, descriptor]);
+      if (averaged) {
+        return {
+          ...result,
+          detected: true,
+          descriptor: averaged,
+          quality: {
+            sharpness: quality.sharpness,
+            luminance: quality.luminance,
+            rollDeg: quality.rollDeg,
+            yawAsymmetry: quality.yawAsymmetry,
+          },
+        };
       }
     }
 
-    previous = result.descriptor;
+    previous = descriptor;
+    lastIssue = "Mantenga la posición un momento";
     await wait(70);
   }
 
-  if (ranked.length === 0) {
-    return {
-      detected: false,
-      descriptor: null,
-      box: null,
-      fivePoints: null,
-      alignedCanvas: null,
-    };
-  }
-
-  ranked.sort((a, b) => b.score - a.score);
-  return ranked[0].result;
+  return {
+    detected: false,
+    descriptor: null,
+    box: null,
+    fivePoints: null,
+    alignedCanvas: null,
+    issue: lastIssue,
+  };
 }
 
 export function cosineDistance(a: number[], b: number[]): number {
